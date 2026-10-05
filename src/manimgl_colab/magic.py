@@ -135,6 +135,28 @@ def _parse_line(line: str) -> dict:
     return parsed
 
 
+def _ensure_scene_in_source(scene_name: str, source: str, origin: str) -> None:
+    """Fail fast with a clear message when the scene class is missing.
+
+    ManimGL only renders classes DEFINED in the rendered source file;
+    imported classes are ignored (extract_scene checks ``__module__``).
+    Without this check the renderer falls into an interactive scene
+    chooser, which dies with a confusing EOFError/SystemExit in Colab.
+    """
+    if re.search(rf"class\s+{re.escape(scene_name)}\s*[(:]", source):
+        return
+    raise ValueError(
+        f"Scene class '{scene_name}' is not defined in {origin}.\n"
+        "ManimGL only renders classes DEFINED in the rendered source — "
+        "imported classes are ignored.\n"
+        "Fix one of these ways:\n"
+        f"  1) %%manimgl ... {scene_name}  → paste the FULL scene code "
+        f"(including 'class {scene_name}(Scene):') below the magic line.\n"
+        f"  2) Render straight from a file on disk:\n"
+        f"     %manimgl_file --gpu -qm /path/to/file.py {scene_name}"
+    )
+
+
 def register_magics() -> None:
     """Register ``%%manimgl`` plus helper line magics in Colab/IPython."""
     from IPython import get_ipython
@@ -146,11 +168,10 @@ def register_magics() -> None:
 
     last_rendered_video: Path | None = None
 
-    def manimgl_magic(line: str, cell: str) -> None:
+    def _render(parsed: dict, source_text: str) -> None:
         nonlocal last_rendered_video
 
         total_start = time.perf_counter()
-        parsed = _parse_line(line)
         scene_name = parsed["scene_name"]
         backend = parsed["backend_override"] or get_backend()
 
@@ -165,7 +186,7 @@ def register_magics() -> None:
         paths.VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         paths.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         paths.RUNTIME_DIR.chmod(0o700)
-        paths.SCENE_FILE.write_text(cell, encoding="utf-8")
+        paths.SCENE_FILE.write_text(source_text, encoding="utf-8")
 
         expected_video = paths.VIDEO_DIR / f"{scene_name}.mp4"
         if expected_video.exists():
@@ -279,6 +300,41 @@ def register_magics() -> None:
               f"Total: {time.perf_counter() - total_start:.2f} s")
         print(f"Download: %manimgl_download {scene_name}")
 
+    def manimgl_magic(line: str, cell: str) -> None:
+        parsed = _parse_line(line)
+        _ensure_scene_in_source(parsed["scene_name"], cell, "this cell")
+        _render(parsed, cell)
+
+    def manimgl_file_magic(line: str) -> None:
+        """Render a scene from a .py file: %manimgl_file [flags] path.py Scene"""
+        tokens = shlex.split(line)
+        if len(tokens) < 2:
+            print("Usage: %manimgl_file [flags] path/to/file.py SceneName")
+            print("Example: %manimgl_file --gpu -qm ultimate_stress_test.py "
+                  "UltimateStressTest")
+            return
+        scene_name = tokens[-1]
+        file_token = tokens[-2]
+        flags = tokens[:-2]
+
+        candidates = [
+            Path(file_token).expanduser(),
+            Path.cwd() / file_token,
+            paths.ROOT / file_token,
+        ]
+        source_path = next((c for c in candidates if c.is_file()), None)
+        if source_path is None:
+            raise FileNotFoundError(
+                f"File not found: {file_token} "
+                f"(searched: {', '.join(str(c) for c in candidates)})"
+            )
+
+        source_text = source_path.read_text(encoding="utf-8")
+        _ensure_scene_in_source(scene_name, source_text, str(source_path))
+        parsed = _parse_line(" ".join([*flags, scene_name]))
+        print(f"Source file: {source_path}")
+        _render(parsed, source_text)
+
     def manimgl_backend_magic(line: str) -> None:
         """Switch the default backend: %manimgl_backend gpu | cpu"""
         choice = line.strip().lower()
@@ -331,6 +387,9 @@ def register_magics() -> None:
 
     ipython.register_magic_function(manimgl_magic, magic_kind="cell", magic_name="manimgl")
     ipython.register_magic_function(
+        manimgl_file_magic, magic_kind="line", magic_name="manimgl_file"
+    )
+    ipython.register_magic_function(
         manimgl_backend_magic, magic_kind="line", magic_name="manimgl_backend"
     )
     ipython.register_magic_function(
@@ -346,5 +405,6 @@ def register_magics() -> None:
 
     print("Magics registered:")
     print("  %%manimgl [-ql|-qm|-qh|-qp|-qk|--draft] [--gpu|--cpu] [--ERROR] Scene")
+    print("  %manimgl_file [flags] path.py Scene   (render from a file on disk)")
     print("  %manimgl_backend gpu|cpu   %manimgl_status   %manimgl_download [Scene]")
     print("  %openfile  %filebackups  %restorefile")

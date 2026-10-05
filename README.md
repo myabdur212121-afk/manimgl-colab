@@ -120,6 +120,8 @@ If a render fails with a LaTeX-related error, the error report itself shows this
 ## Other magics
 
 ```python
+%manimgl_file --gpu -qm my_scenes.py MyScene   # render from a .py file on disk
+
 %manimgl_download             # download the newest MP4
 %manimgl_download MyScene     # newest MP4 of that scene (partial renders too)
 
@@ -130,6 +132,20 @@ If a render fails with a LaTeX-related error, the error report itself shows this
 mc.enable_autocomplete()      # refresh the IDE bridge (manimlib autocomplete)
 mc.status()                   # same as %manimgl_status, returns a dict
 ```
+
+## Troubleshooting
+
+**`No scene named X found` → interactive chooser → `EOFError`/`SystemExit`**
+ManimGL only renders classes **defined in the rendered source** — imported
+classes are ignored. So the `%%manimgl` cell must contain the full
+`class X(Scene):` code below the magic line. To render a scene that lives in
+a file instead (e.g. downloaded with `wget`), use:
+
+```python
+%manimgl_file --gpu -qm ultimate_stress_test.py UltimateStressTest
+```
+
+Since v1.1.0 the magic detects this before rendering and prints exactly this fix.
 
 ## How the GPU mode works (and why it is not fake)
 
