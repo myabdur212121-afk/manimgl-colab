@@ -133,7 +133,30 @@ mc.enable_autocomplete()      # refresh the IDE bridge (manimlib autocomplete)
 mc.status()                   # same as %manimgl_status, returns a dict
 ```
 
+## Upgrading inside a running runtime
+
+`pip install --force-reinstall` writes new files, but Python keeps the OLD
+module loaded if it was already imported. After upgrading, either restart the
+runtime, or purge the module cache:
+
+```python
+!pip install -q --no-deps --force-reinstall git+https://github.com/myabdur212121-afk/manimgl-colab.git
+
+import sys
+for name in list(sys.modules):
+    if name.startswith("manimgl_colab"):
+        del sys.modules[name]
+
+import manimgl_colab as mc
+print(mc.__version__)      # verify the new version is active
+mc.register_magics()       # re-register the new magics
+```
+
 ## Troubleshooting
+
+**`Line magic function %manimgl_file not found`**
+You are running a stale, previously-imported module version. Use the upgrade
+snippet above (or restart the runtime and rerun setup).
 
 **`No scene named X found` → interactive chooser → `EOFError`/`SystemExit`**
 ManimGL only renders classes **defined in the rendered source** — imported

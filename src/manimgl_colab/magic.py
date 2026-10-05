@@ -403,7 +403,8 @@ def register_magics() -> None:
 
     register_file_magics()
 
-    print("Magics registered:")
+    from . import __version__ as _v
+    print(f"manimgl-colab v{_v} — magics registered:")
     print("  %%manimgl [-ql|-qm|-qh|-qp|-qk|--draft] [--gpu|--cpu] [--ERROR] Scene")
     print("  %manimgl_file [flags] path.py Scene   (render from a file on disk)")
     print("  %manimgl_backend gpu|cpu   %manimgl_status   %manimgl_download [Scene]")
