@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manimgl-colab"
+version = "1.0.0"
+description = "ManimGL (3b1b) on Google Colab: one engine, honest CPU/GPU switching, ManimCE-style %%manimgl magic, optional LaTeX"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "myabdur212121-afk"}]
+keywords = ["manim", "manimgl", "colab", "gpu", "egl", "animation"]
+
+[project.urls]
+Homepage = "https://github.com/myabdur212121-afk/manimgl-colab"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+manimgl_colab = ["py.typed"]

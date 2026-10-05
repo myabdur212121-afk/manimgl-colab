@@ -1,0 +1,80 @@
+"""manimgl-colab — ManimGL (3b1b) on Google Colab with honest CPU/GPU switching.
+
+Quick start::
+
+    import manimgl_colab as mc
+
+    mc.setup()               # one engine for both backends (no LaTeX)
+    mc.backend("gpu")        # strict, verified NVIDIA switch (or "cpu")
+    mc.install_latex()       # optional; slim=False for the complete set
+
+Then render with the ManimCE-style cell magic::
+
+    %%manimgl -qm MyScene
+    from manimlib import *
+
+    class MyScene(Scene):
+        ...
+"""
+
+from __future__ import annotations
+
+from .autocomplete import enable_autocomplete
+from .backends import (
+    detect_nvidia_gpu,
+    get_backend,
+    prepare_gpu,
+    probe,
+    set_backend,
+    status,
+)
+from .installer import (
+    create_virtual_environment,
+    download_manimgl,
+    install_manimgl,
+    install_pip,
+    install_system_dependencies,
+    patch_manimgl_source,
+    prepare_directories,
+    setup,
+    verify_installation,
+)
+from .latex import install_latex, is_latex_installed
+from .magic import register_magics
+
+
+def backend(name: str | None = None, *, force: bool = False):
+    """Get or set the default backend.
+
+    ``mc.backend()`` returns the current default ("cpu" or "gpu").
+    ``mc.backend("gpu")`` switches (with strict NVIDIA verification).
+    """
+    if name is None:
+        return get_backend()
+    return set_backend(name, force=force)
+
+
+__all__ = [
+    "backend",
+    "create_virtual_environment",
+    "detect_nvidia_gpu",
+    "download_manimgl",
+    "enable_autocomplete",
+    "get_backend",
+    "install_latex",
+    "install_manimgl",
+    "install_pip",
+    "install_system_dependencies",
+    "is_latex_installed",
+    "patch_manimgl_source",
+    "prepare_directories",
+    "prepare_gpu",
+    "probe",
+    "register_magics",
+    "set_backend",
+    "setup",
+    "status",
+    "verify_installation",
+]
+
+__version__ = "1.0.0"
