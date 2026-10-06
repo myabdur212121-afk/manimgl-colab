@@ -203,6 +203,11 @@ def register_magics() -> None:
         live = ui.LiveDisplay()
         render_start = time.perf_counter()
         progress_seen = {"frames": False}
+        gpu_monitor = None
+        if backend == "gpu":
+            from .progress import GPUMonitor
+
+            gpu_monitor = GPUMonitor().start()
 
         def on_update(state: ProgressState) -> None:
             if state.frames_done is not None:
@@ -221,6 +226,7 @@ def register_magics() -> None:
                 elapsed=time.perf_counter() - render_start,
                 anim_label=state.anim_label,
                 encoder=encoder if encoder != "libx264" else None,
+                gpu_line=gpu_monitor.line if gpu_monitor else None,
             ))
 
         on_update(ProgressState())
@@ -261,6 +267,8 @@ def register_magics() -> None:
                     verbose=parsed["verbose"],
                 )
 
+        if gpu_monitor is not None:
+            gpu_monitor.stop()
         process_seconds = time.perf_counter() - render_start
         proof = re.search(r"\[manimgl-colab\] GL_RENDERER: (.+)", raw_output)
         renderer = proof.group(1).strip() if proof else None
@@ -326,6 +334,10 @@ def register_magics() -> None:
             "jobs": parsed["jobs"],
             "num_plays": num_plays,
             "prerun_auto_disabled": parsed.get("prerun_auto_disabled", False),
+            "gpu_peak": (
+                f"{gpu_monitor.peak_util}% util · {gpu_monitor.peak_encoder}% enc · "
+                f"{gpu_monitor.peak_vram:.1f} GB VRAM"
+            ) if gpu_monitor else None,
             "gpu_verified": bool(renderer and is_nvidia_renderer(renderer)),
         }, raw_output)
 

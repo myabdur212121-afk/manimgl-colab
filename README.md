@@ -204,6 +204,11 @@ mc.register_magics()
 
 ## Changelog
 
+**2.1.0**
+- Live GPU monitor: on GPU renders the progress card shows real **GPU-util %**, encoder % and VRAM every second (via nvidia-smi); peak values appear in `%manimgl_log`.
+
+**2.0.1** — added `use_gpu()` / `use_cpu()` aliases.
+
 **2.0.0**
 - ManimCE-style rich error panels (highlighted frames, collapsed library frames, hints).
 - Live HTML progress card with real % + ETA (prerun pass, auto-disables when unsafe).

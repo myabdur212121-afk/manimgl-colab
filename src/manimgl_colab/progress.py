@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 import time
 from typing import Callable, Optional
 
@@ -142,3 +143,66 @@ def run_streaming(
         on_update(state)
 
     return process.wait(), "".join(log_parts)
+
+
+class GPUMonitor:
+    """Samples real GPU utilization (not just VRAM) via nvidia-smi.
+
+    Runs a daemon thread polling once per second.  ``line`` is a short
+    human string for the live progress card; ``peak_util`` / ``peak_vram``
+    are kept for the post-render log card.  Safe no-op when nvidia-smi is
+    unavailable.
+    """
+
+    _QUERY = [
+        "nvidia-smi",
+        "--query-gpu=utilization.gpu,utilization.encoder,memory.used,memory.total",
+        "--format=csv,noheader,nounits",
+    ]
+
+    def __init__(self) -> None:
+        self.line: str | None = None
+        self.peak_util: int = 0
+        self.peak_encoder: int = 0
+        self.peak_vram: float = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _sample(self) -> None:
+        import subprocess
+
+        result = subprocess.run(
+            self._QUERY, capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return
+        parts = [p.strip() for p in result.stdout.strip().splitlines()[0].split(",")]
+        util, encoder, used, total = (
+            int(float(parts[0])), int(float(parts[1])),
+            float(parts[2]) / 1024, float(parts[3]) / 1024,
+        )
+        self.peak_util = max(self.peak_util, util)
+        self.peak_encoder = max(self.peak_encoder, encoder)
+        self.peak_vram = max(self.peak_vram, used)
+        self.line = (
+            f"GPU {util}% · enc {encoder}% · VRAM {used:.1f}/{total:.0f} GB"
+        )
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._sample()
+            except Exception:  # noqa: BLE001 — monitoring must never break renders
+                self.line = None
+                return
+            self._stop.wait(1.0)
+
+    def start(self) -> "GPUMonitor":
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)

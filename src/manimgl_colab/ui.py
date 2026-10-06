@@ -103,6 +103,7 @@ def progress_card(
     elapsed: float,
     anim_label: Optional[str],
     encoder: Optional[str] = None,
+    gpu_line: Optional[str] = None,
 ) -> str:
     """The single live card shown while rendering."""
     pieces: list[str] = []
@@ -118,6 +119,8 @@ def progress_card(
     pieces.append(f"elapsed {elapsed:.0f}s")
     if encoder:
         pieces.append(esc(encoder))
+    if gpu_line:
+        pieces.append(f'<span style="color:{ACCENT};">{esc(gpu_line)}</span>')
     footer = f' <span style="color:{DIM};">·</span> '.join(
         f'<span style="color:{DIM};">{piece}</span>' for piece in pieces
     )
@@ -201,6 +204,8 @@ def summary_card(info: dict[str, Any], raw_log: str | None = None) -> str:
         _row("Output", f'<code style="font-size:12px;">{esc(info.get("path", "—"))}</code>'),
         _row("Workers", esc(info.get("jobs", 1))),
     ]
+    if info.get("gpu_peak"):
+        rows.append(_row("GPU peak", esc(info["gpu_peak"])))
     log_section = ""
     if raw_log is None and LOG_FILE.exists():
         try:
