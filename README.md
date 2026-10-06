@@ -78,6 +78,7 @@ driver quirks it falls back to `libx264` **once, visibly** (the log card shows
 | `--jobs N` | experimental parallel rendering (see below) |
 | `--no-prerun` | skip the counting pass (progress shows it/s instead of %) |
 | `--fps N` | override frame rate for any quality (e.g. `-qk --fps 30`) |
+| `-s` / `--image` | render only the final frame as a PNG (poster/thumbnail) |
 | `--verbose` / `-v` | stream the raw ManimGL log while rendering |
 | `--ERROR` | full ManimCE-style traceback (library frames included); default shows only your code |
 | `--display-width W` | video player width in px (default 640) |
@@ -96,6 +97,10 @@ Notes:
 
 - The scene class must be defined **in the cell** (each render runs in a clean
   subprocess for reproducibility).
+- **Static scenes render an image, like ManimCE**: a scene with no
+  `self.play(...)`/`self.wait(...)` produces a PNG still of the final frame
+  automatically (ManimCE's `scene_finished` behaviour) with a hint on how to
+  get a video instead.
 - `%manimgl_file path.py:SceneName -qh` renders a scene from a file instead.
 
 ### Live progress
@@ -221,6 +226,10 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.4.0**
+- Static scenes (no animations) now auto-render a PNG image, exactly like ManimCE; `%manimgl_download` and `%manimgl_log` understand image outputs.
+- New `-s` / `--image` flag: save only the final frame of any scene (fast posters/thumbnails at any quality).
 
 **2.3.0**
 - Compact error view is now the default: your frames + error line only; `--ERROR` shows the full ManimCE-identical chain.

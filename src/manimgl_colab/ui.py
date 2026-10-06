@@ -149,8 +149,10 @@ def finished_strip(
     renderer: Optional[str],
     seconds: float,
     size_mb: float,
+    note: Optional[str] = None,
 ) -> str:
     """Slim one-line success strip replacing the progress card."""
+    note_part = f"{esc(note)} · " if note else ""
     return f"""
     <div style="border:1px solid {BORDER}; border-left:3px solid {GREEN};
                 border-radius:8px; background:{BG}; padding:7px 14px; margin:6px 0;
@@ -159,7 +161,7 @@ def finished_strip(
       <span><span style="color:{GREEN};">✔</span>
         <span style="color:{TEXT};"> {esc(scene)}</span>
         &nbsp;{backend_badge(backend, renderer)}</span>
-      <span>{seconds:.1f}s · {size_mb:.2f} MB · details: %manimgl_log</span>
+      <span>{note_part}{seconds:.1f}s · {size_mb:.2f} MB · details: %manimgl_log</span>
     </div>
     """
 
@@ -202,6 +204,7 @@ def summary_card(info: dict[str, Any], raw_log: str | None = None) -> str:
         _row("Render time", f"{info.get('seconds', 0):.2f} s"),
         _row("File size", f"{info.get('size_mb', 0):.2f} MB"),
         _row("Output", f'<code style="font-size:12px;">{esc(info.get("path", "—"))}</code>'),
+        _row("Type", "PNG image (static)" if info.get("output_type") == "image" else "MP4 video"),
         _row("Workers", esc(info.get("jobs", 1))),
     ]
     if info.get("gpu_peak"):

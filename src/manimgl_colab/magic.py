@@ -13,7 +13,7 @@ Examples::
     %manimgl_file --gpu -qk ultimate_stress_test.py UltimateStressTest
 
 Flags: -ql -qm -qh -qp -qk --draft | --gpu --cpu | -v LEVEL | --ERROR
-       --no-prerun --verbose --jobs N --fps N --display-width W --progress-off
+       --no-prerun --verbose --jobs N --fps N -s/--image --display-width W --progress-off
 """
 
 from __future__ import annotations
@@ -68,6 +68,7 @@ def _parse_line(line: str) -> dict:
         "backend_override": None,
         "jobs": 1,
         "user_vcodec": False,
+        "image_only": False,
         "fps_override": None,
         "extra": [],
     }
@@ -82,6 +83,10 @@ def _parse_line(line: str) -> dict:
         elif normalized == "--draft":
             parsed["render_options"] = ["-r", "640x360", "--fps", "15"]
             parsed["quality_label"] = "draft"
+        elif option in ("-s", "--image"):
+            # ManimGL's own machinery: skip_animations + write_file
+            # => save_last_frame (config.py:272). Renders a PNG still.
+            parsed["image_only"] = True
         elif normalized == "--fps":
             if index + 1 >= len(options):
                 raise ValueError("--fps must be followed by a frame rate.")
@@ -155,7 +160,7 @@ def _ensure_scene_in_source(scene_name: str, source: str, origin: str) -> None:
 def register_magics() -> None:
     """Register ``%%manimgl`` plus helper line magics in Colab/IPython."""
     from IPython import get_ipython
-    from IPython.display import HTML, Video, display
+    from IPython.display import HTML, Image, Video, display
 
     ipython = get_ipython()
     if ipython is None:
@@ -167,6 +172,29 @@ def register_magics() -> None:
     # ------------------------------------------------------------------
     # Core render pipeline (shared by %%manimgl and %manimgl_file)
     # ------------------------------------------------------------------
+
+    def _video_is_empty(path: Path) -> bool:
+        """ManimGL writes a ~261-byte frameless MP4 container when a scene
+        has zero animations — detect it so we can fall back to an image."""
+        try:
+            if path.stat().st_size < 4096:
+                return True
+        except OSError:
+            return True
+        try:
+            import subprocess
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v",
+                 "-show_entries", "stream=nb_frames,duration",
+                 "-of", "csv=p=0", str(path)],
+                capture_output=True, text=True, timeout=30,
+            )
+            fields = probe.stdout.strip().replace("\n", ",").split(",")
+            numbers = [float(f) for f in fields if f and f not in ("N/A",)]
+            return not numbers or max(numbers) <= 0
+        except Exception:  # noqa: BLE001 — probing must never kill a render
+            return False
+
     def _render(parsed: dict, source_text: str) -> None:
         nonlocal last_rendered_video
 
@@ -201,7 +229,8 @@ def register_magics() -> None:
         # Encoder selection: NVENC automatically on a verified GPU backend.
         encoder = "libx264"
         encoder_args: list[str] = []
-        if not parsed["user_vcodec"] and backend == "gpu" and nvenc_available():
+        if (not parsed["user_vcodec"] and backend == "gpu"
+                and not parsed["image_only"] and nvenc_available()):
             encoder = "h264_nvenc"
             encoder_args = ["--vcodec", "h264_nvenc"]
 
@@ -219,7 +248,9 @@ def register_magics() -> None:
                 *extra_encoder_args,
                 *parsed["extra"],
             ]
-            if parsed["prerun"] and parsed["jobs"] == 1:
+            if parsed["image_only"]:
+                command.append("-s")
+            elif parsed["prerun"] and parsed["jobs"] == 1:
                 command.append("--prerun")
             return command
 
@@ -316,30 +347,71 @@ def register_magics() -> None:
             }, raw_output)
             raise ManimGLRenderError(f"{exception_type}: {message}") from None
 
-        if not expected_video.exists():
-            candidates = sorted(
-                paths.VIDEO_DIR.glob(f"{scene_name}*.mp4"),
-                key=lambda path: path.stat().st_mtime, reverse=True,
-            )
-            if not candidates:
-                raise FileNotFoundError("Rendering completed, but no MP4 was found.")
-            expected_video = candidates[0]
+        expected_image = paths.VIDEO_DIR / f"{scene_name}.png"
+        static_fallback = False
+        if not parsed["image_only"]:
+            if not expected_video.exists():
+                candidates = sorted(
+                    paths.VIDEO_DIR.glob(f"{scene_name}*.mp4"),
+                    key=lambda path: path.stat().st_mtime, reverse=True,
+                )
+                if candidates:
+                    expected_video = candidates[0]
+            if not expected_video.exists() or _video_is_empty(expected_video):
+                # ManimCE behaviour (cairo_renderer.scene_finished): a scene
+                # with zero animations renders an image instead of a movie.
+                # ManimGL lacks the auto-switch, so rerun with -s ourselves.
+                static_command = [
+                    part for part in build_command([]) if part != "--prerun"
+                ] + ["-s"]
+                fallback_code, fallback_output = run_streaming(
+                    static_command, environment, on_update,
+                    verbose=parsed["verbose"],
+                )
+                raw_output += "\n" + fallback_output
+                if fallback_code != 0 or not expected_image.exists():
+                    raise FileNotFoundError(
+                        "Rendering completed, but no MP4 was found."
+                    )
+                static_fallback = True
+                if expected_video.exists():
+                    expected_video.unlink()   # drop the frameless container
 
-        last_rendered_video = expected_video
-        size_mb = expected_video.stat().st_size / (1024 * 1024)
+        is_image = parsed["image_only"] or static_fallback
+        output_path = expected_image if is_image else expected_video
+        if is_image and not output_path.exists():
+            raise FileNotFoundError("Rendering completed, but no PNG was found.")
+
+        last_rendered_video = output_path
+        size_mb = output_path.stat().st_size / (1024 * 1024)
 
         frame_counts = re.findall(r"(\d+)/(\d+)\s*\[", raw_output)
-        frames = frame_counts[-1][1] if frame_counts else None
+        frames = "1" if is_image else (frame_counts[-1][1] if frame_counts else None)
 
+        strip_note = None
+        if static_fallback:
+            strip_note = "static scene → image (PNG)"
+        elif parsed["image_only"]:
+            strip_note = "image (PNG)"
         live.update(ui.finished_strip(
             scene=scene_name, backend=backend, renderer=renderer,
-            seconds=process_seconds, size_mb=size_mb,
+            seconds=process_seconds, size_mb=size_mb, note=strip_note,
         ), force=True)
-        attributes = (
-            "controls autoplay muted loop "
-            f'width="{parsed["display_width"]}" style="max-width:100%; height:auto;"'
-        )
-        display(Video(str(expected_video), embed=True, html_attributes=attributes))
+        if is_image:
+            display(Image(filename=str(output_path), width=parsed["display_width"]))
+            if static_fallback:
+                display(HTML(
+                    f'<div style="color:{ui.DIM}; font:11.5px {ui.MONO};'
+                    f' margin:4px 0;">💡 Static scene (no animations) — add'
+                    f' <b>self.play(...)</b> or <b>self.wait(2)</b> for a video.'
+                    "</div>"
+                ))
+        else:
+            attributes = (
+                "controls autoplay muted loop "
+                f'width="{parsed["display_width"]}" style="max-width:100%; height:auto;"'
+            )
+            display(Video(str(expected_video), embed=True, html_attributes=attributes))
 
         ui.remember_render({
             "scene": scene_name,
@@ -353,7 +425,8 @@ def register_magics() -> None:
             "seconds": process_seconds,
             "total_seconds": time.perf_counter() - total_start,
             "size_mb": size_mb,
-            "path": str(expected_video),
+            "path": str(output_path),
+            "output_type": "image" if is_image else "video",
             "jobs": parsed["jobs"],
             "num_plays": num_plays,
             "prerun_auto_disabled": parsed.get("prerun_auto_disabled", False),
@@ -430,7 +503,8 @@ def register_magics() -> None:
         selected: Path | None = None
         if requested_scene:
             candidates = sorted(
-                paths.VIDEO_DIR.glob(f"{requested_scene}*.mp4"),
+                [*paths.VIDEO_DIR.glob(f"{requested_scene}*.mp4"),
+                 *paths.VIDEO_DIR.glob(f"{requested_scene}*.png")],
                 key=lambda path: path.stat().st_mtime, reverse=True,
             )
             selected = candidates[0] if candidates else None
@@ -438,7 +512,7 @@ def register_magics() -> None:
             selected = last_rendered_video
         else:
             candidates = sorted(
-                paths.VIDEO_DIR.glob("*.mp4"),
+                [*paths.VIDEO_DIR.glob("*.mp4"), *paths.VIDEO_DIR.glob("*.png")],
                 key=lambda path: path.stat().st_mtime, reverse=True,
             )
             selected = candidates[0] if candidates else None
