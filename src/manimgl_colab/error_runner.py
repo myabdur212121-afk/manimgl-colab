@@ -7,6 +7,7 @@ It must stay dependency-free (standard library only).
 from __future__ import annotations
 
 import json
+import linecache
 import os
 import sys
 import traceback
@@ -15,6 +16,24 @@ from typing import Any
 
 REPORT_ENV = "MANIMGL_ERROR_REPORT"
 CELL_ENV = "MANIMGL_CELL_FILE"
+
+CONTEXT = 3  # rich.traceback default: extra_lines=3
+
+
+def _context_lines(filename: str, lineno: int) -> dict[str, Any] | None:
+    """rich reads sources with linecache (traceback.py:835); so do we."""
+    try:
+        all_lines = linecache.getlines(filename)
+    except Exception:
+        return None
+    if not all_lines:
+        return None
+    start = max(1, lineno - CONTEXT)
+    end = min(len(all_lines), lineno + CONTEXT)
+    return {
+        "start": start,
+        "lines": [all_lines[i - 1].rstrip("\n") for i in range(start, end + 1)],
+    }
 
 
 def _frame_to_dict(frame: traceback.FrameSummary) -> dict[str, Any]:
@@ -26,6 +45,7 @@ def _frame_to_dict(frame: traceback.FrameSummary) -> dict[str, Any]:
         "colno": getattr(frame, "colno", None),
         "end_colno": getattr(frame, "end_colno", None),
         "end_lineno": getattr(frame, "end_lineno", None),
+        "context": _context_lines(frame.filename, frame.lineno or 1),
     }
 
 

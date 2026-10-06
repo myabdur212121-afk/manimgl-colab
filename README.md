@@ -77,6 +77,7 @@ driver quirks it falls back to `libx264` **once, visibly** (the log card shows
 | `--gpu` / `--cpu` | override backend for this render only |
 | `--jobs N` | experimental parallel rendering (see below) |
 | `--no-prerun` | skip the counting pass (progress shows it/s instead of %) |
+| `--fps N` | override frame rate for any quality (e.g. `-qk --fps 30`) |
 | `--verbose` / `-v` | stream the raw ManimGL log while rendering |
 | `--ERROR` | show **all** traceback frames (library frames included) |
 | `--display-width W` | video player width in px (default 640) |
@@ -121,13 +122,23 @@ plus a one-line summary strip. Everything else is on demand, as formatted HTML:
 
 ---
 
-## Error reports
+## Error reports — ManimCE-identical
 
-Failures render a ManimCE-style panel: syntax-highlighted frames from **your**
-code, the exact line marked with `❱` and a caret under the offending span,
-library frames collapsed (expand with `--ERROR`), a hint when the error is a
-known gotcha, the raw log in a collapsible section, and a red final strip with
-`ExceptionType: message`.
+ManimCE prints errors with rich's traceback renderer; this package reproduces
+that renderer faithfully in HTML:
+
+- red rounded panel titled *Traceback (most recent call last)*
+- **every frame shown**, oldest first, `path:lineno in function` headers —
+  your cell's frames are labelled **Your cell** with line numbers matching
+  the cell exactly (the `%%manimgl` line counts as line 1)
+- 3 context lines around each failing line (syntax highlighted, `❱` marker,
+  highlighted background)
+- the **exact failing expression red-underlined** via Python 3.11 fine-grained
+  column positions — the same `co_positions()` mechanism rich uses
+- chained exceptions with the standard separator sentences; `… N frames
+  hidden …` middle cut beyond 100 frames; locals are not shown (rich default)
+- below the CE-identical part: hint strips for known gotchas and the full raw
+  log in a collapsible section
 
 ---
 
@@ -203,6 +214,10 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.2.0**
+- Error reports rebuilt to be ManimCE-identical (rich traceback port): all frames, 3-line context, exact-expression underline via `co_positions()`, cell-accurate line numbers, chained-exception separators.
+- New `--fps N` flag to override frame rate at any quality.
 
 **2.1.0**
 - Live GPU monitor: on GPU renders the progress card shows real **GPU-util %**, encoder % and VRAM every second (via nvidia-smi); peak values appear in `%manimgl_log`.

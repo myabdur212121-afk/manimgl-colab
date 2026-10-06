@@ -13,7 +13,7 @@ Examples::
     %manimgl_file --gpu -qk ultimate_stress_test.py UltimateStressTest
 
 Flags: -ql -qm -qh -qp -qk --draft | --gpu --cpu | -v LEVEL | --ERROR
-       --no-prerun --verbose --jobs N --display-width W --progress-off
+       --no-prerun --verbose --jobs N --fps N --display-width W --progress-off
 """
 
 from __future__ import annotations
@@ -68,6 +68,7 @@ def _parse_line(line: str) -> dict:
         "backend_override": None,
         "jobs": 1,
         "user_vcodec": False,
+        "fps_override": None,
         "extra": [],
     }
 
@@ -81,6 +82,14 @@ def _parse_line(line: str) -> dict:
         elif normalized == "--draft":
             parsed["render_options"] = ["-r", "640x360", "--fps", "15"]
             parsed["quality_label"] = "draft"
+        elif normalized == "--fps":
+            if index + 1 >= len(options):
+                raise ValueError("--fps must be followed by a frame rate.")
+            fps = int(options[index + 1])
+            if not 1 <= fps <= 120:
+                raise ValueError("--fps must be between 1 and 120.")
+            parsed["fps_override"] = fps
+            index += 1
         elif option in ("-v", "--verbosity"):
             if index + 1 >= len(options):
                 raise ValueError("-v must be followed by a log level.")
@@ -116,6 +125,14 @@ def _parse_line(line: str) -> dict:
                 parsed["user_vcodec"] = True
             parsed["extra"].append(option)
         index += 1
+    if parsed["fps_override"]:
+        cleaned = list(parsed["render_options"])
+        if "--fps" in cleaned:
+            position = cleaned.index("--fps")
+            del cleaned[position:position + 2]
+        parsed["render_options"] = cleaned + ["--fps", str(parsed["fps_override"])]
+        parsed["quality_label"] += f' @{parsed["fps_override"]}fps'
+
     return parsed
 
 
@@ -165,7 +182,13 @@ def register_magics() -> None:
         paths.VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         paths.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         paths.RUNTIME_DIR.chmod(0o700)
-        paths.SCENE_FILE.write_text(source_text, encoding="utf-8")
+        # One header comment so the file's line numbers equal the user's
+        # cell line numbers (the %%manimgl line occupies cell line 1) —
+        # error reports then point at the lines the user actually sees.
+        paths.SCENE_FILE.write_text(
+            "# %%manimgl — rendered by manimgl-colab\n" + source_text,
+            encoding="utf-8",
+        )
 
         expected_video = paths.VIDEO_DIR / f"{scene_name}.mp4"
         if expected_video.exists():
