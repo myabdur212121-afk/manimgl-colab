@@ -246,6 +246,31 @@ def is_nvidia_renderer(renderer: str) -> bool:
     return any(token in lowered for token in NVIDIA_RENDERER_TOKENS)
 
 
+_NVENC_CACHE: bool | None = None
+
+
+def nvenc_available(*, refresh: bool = False) -> bool:
+    """True when ffmpeg can REALLY encode with NVENC (test-encodes a frame).
+
+    Merely being listed in ``ffmpeg -encoders`` is not enough: builds often
+    include the encoder but fail at runtime without an NVIDIA driver.
+    """
+    global _NVENC_CACHE
+    if _NVENC_CACHE is not None and not refresh:
+        return _NVENC_CACHE
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=black:s=64x64:d=0.1",
+             "-c:v", "h264_nvenc", "-f", "null", "-"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20,
+        )
+        _NVENC_CACHE = result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        _NVENC_CACHE = False
+    return _NVENC_CACHE
+
+
 def prepare_gpu(*, force: bool = False) -> dict:
     """Prepare and verify the NVIDIA EGL backend (strict, no fake GPU)."""
     gpu = detect_nvidia_gpu()
@@ -308,8 +333,8 @@ def set_backend(backend: str, *, force: bool = False) -> dict[str, str]:
     return info
 
 
-def status() -> dict[str, object]:
-    """Print and return the current configuration."""
+def status_report() -> dict[str, object]:
+    """Collect the current configuration silently (no output)."""
     backend = get_backend()
     report: dict[str, object] = {
         "backend": backend,
@@ -317,24 +342,37 @@ def status() -> dict[str, object]:
         "source_dir": str(paths.SOURCE_DIR),
         "video_dir": str(paths.VIDEO_DIR),
         "engine_installed": paths.ENV_PYTHON.exists(),
+        "nvenc": nvenc_available(),
     }
-    print("manimgl-colab status")
-    print("-" * 50)
-    print(f"Default backend : {backend.upper()}")
-    print(f"Engine installed: {report['engine_installed']}")
     try:
         info = probe(backend)
         report["renderer"] = info.get("renderer", "")
         report["opengl"] = info.get("version", "")
-        honest = ("GPU ✅" if is_nvidia_renderer(str(report["renderer"]))
-                  else "CPU (software)")
-        print(f"Live renderer   : {report['renderer']}  →  {honest}")
-        print(f"OpenGL          : {report['opengl']}")
     except Exception as error:  # noqa: BLE001
-        print(f"Live probe failed: {error}")
+        report["probe_error"] = str(error)
     from .latex import is_latex_installed
 
     report["latex"] = is_latex_installed()
-    print(f"LaTeX installed : {report['latex']}")
-    print(f"Video directory : {report['video_dir']}")
+    from . import __version__
+
+    report["version"] = __version__
+    return report
+
+
+def status() -> dict[str, object]:
+    """Show a professional status card (HTML in notebooks) and return data."""
+    report = status_report()
+    try:
+        from IPython import get_ipython
+        from IPython.display import HTML, display
+
+        if get_ipython() is not None:
+            from .ui import status_card
+
+            display(HTML(status_card(report)))
+            return report
+    except ImportError:
+        pass
+    for key, value in report.items():
+        print(f"{key:16}: {value}")
     return report

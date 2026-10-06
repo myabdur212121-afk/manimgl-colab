@@ -280,6 +280,11 @@ class UltimateStressTest(ThreeDScene):
 
         for dot in particles:
             dot.clear_updaters()
+        for trail in trails:
+            # Clear BEFORE transforming: a TracingTail updater keeps changing
+            # the point count, which breaks Transform during skip passes
+            # (ManimGL prerun / -n slicing).
+            trail.clear_updaters()
         self.frame.clear_updaters()
         self.play(
             *(FadeOut(mobject) for mobject in (*trails, particles, title)),

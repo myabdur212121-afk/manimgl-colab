@@ -223,6 +223,15 @@ def setup(
 
         _register()
 
+    # Editor bridge: resolves 'manimlib' for Colab's language server so the
+    # yellow missing-import underlines disappear and autocomplete works.
+    try:
+        from .autocomplete import enable_autocomplete
+
+        enable_autocomplete()
+    except Exception as error:  # noqa: BLE001
+        print(f"(editor bridge skipped: {error})")
+
     from .backends import get_backend
 
     print("\n" + "=" * 70)

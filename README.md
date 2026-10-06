@@ -1,216 +1,220 @@
 # manimgl-colab
 
-**ManimGL (3Blue1Brown) on Google Colab — one engine, honest CPU/GPU switching, ManimCE-style `%%manimgl` magic, optional LaTeX.**
+Clean, honest **ManimGL (3b1b/manim)** setup for **Google Colab** — with verified
+GPU rendering, a ManimCE-style `%%manimgl` cell magic, rich error reports, live
+progress, NVENC hardware encoding and experimental parallel rendering.
 
-- ✅ **One** isolated environment + **one** pinned ManimGL (v1.7.2) serves **both** CPU and GPU — switching never reinstalls anything.
-- ✅ **Honest hardware proof**: every render prints the real `GL_RENDERER` (e.g. `Tesla T4` or `llvmpipe`). GPU mode is **strict** — if the context is not a real NVIDIA renderer, the render **fails loudly** instead of silently using the CPU.
-- ✅ ManimCE-style magic: `%%manimgl -qm MyScene` with `-ql -qm -qh -qp -qk --draft`, `-v WARNING`, `--gpu/--cpu`.
-- ✅ LaTeX is **optional**: `mc.install_latex()` (slim, fast) or `mc.install_latex(slim=False)` (complete).
-- ✅ Rich compact/full error reports, `%manimgl_download`, `%openfile` with automatic backups, Colab IDE autocomplete bridge.
-- ✅ Colab's own IPython is never touched (no dependency crash, no kernel restart needed).
+> This package targets **Google Colab only** and **ManimGL** (3b1b's engine),
+> not ManimCE.
 
 ---
 
-## Quick start (Google Colab)
-
-### Cell 1 — install the setup API
+## Quick start
 
 ```python
-!pip install -q --no-deps git+https://github.com/myabdur212121-afk/manimgl-colab.git
-```
-
-`--no-deps` keeps Colab's IPython untouched. The heavy engine is installed by `setup()` into `/content/manimgl-env`, fully isolated.
-
-### Cell 2 — set up the engine (≈2–3 minutes on a fresh runtime)
-
-```python
+# Cell 1 — install (~1 minute)
+!pip install -q git+https://github.com/myabdur212121-afk/manimgl-colab.git
 import manimgl_colab as mc
-
-mc.setup()          # installs engine + registers all magics (no LaTeX)
-```
-
-On a **GPU runtime** (Runtime → Change runtime type → T4 GPU):
-
-```python
-mc.backend("gpu")   # strict verification: prints the real NVIDIA renderer
-```
-
-### Cell 3 — render
-
-```python
-%%manimgl -qm RotatingSphere
-from manimlib import *
-
-
-class RotatingSphere(ThreeDScene):
-    def construct(self):
-        self.frame.reorient(25, 70)
-        sphere = Sphere(radius=2.2, resolution=(25, 25))
-        sphere.set_color(BLUE_D)
-        self.play(FadeIn(sphere))
-        self.play(Rotate(sphere, TAU, axis=UP), run_time=4, rate_func=linear)
-        self.wait()
-```
-
-The MP4 is saved under `/content/manimgl_videos/` and displayed automatically, together with the hardware proof line:
-
-```
-Proof — GL_RENDERER: Tesla T4/PCIe/SSE2  →  GPU ✅
-```
-
----
-
-## Switching CPU ↔ GPU — any time, instantly
-
-```python
-mc.backend("gpu")      # strict NVIDIA verification, then set as default
-mc.backend("cpu")      # honest Mesa/llvmpipe software rendering
-mc.backend()           # read the current default
-```
-
-or as line magic / per-cell override:
-
-```python
-%manimgl_backend gpu
+mc.setup()          # installs ManimGL in an isolated venv + registers magics
 ```
 
 ```python
-%%manimgl --cpu --draft MyScene     # this cell only: CPU
-%%manimgl --gpu -qh MyScene         # this cell only: GPU (strict)
-```
-
-**Strict mode guarantee:** when GPU is requested but no NVIDIA context can be created, you get a clear error — never a hidden CPU fallback. Verify anytime:
-
-```python
-%manimgl_status
-```
-
-```
-Default backend : GPU
-Live renderer   : Tesla T4/PCIe/SSE2  →  GPU ✅
-OpenGL          : 4.6.0 NVIDIA 550.54.15
-```
-
-## Quality flags (ManimCE style)
-
-| Flag | Output |
-|---|---|
-| `--draft` | 640×360 @ 15 FPS (fastest check) |
-| `-ql` | low, 480p |
-| `-qm` | medium, 720p |
-| `-qh` | high, 1080p |
-| `-qp` | 2560×1440 |
-| `-qk` | 4K |
-| `-r 960x540` | custom resolution (passed through) |
-| `--fps 60` | custom frame rate (passed through) |
-
-Other flags: `-v WARNING|INFO|DEBUG`, `--display-width 560` (preview size only), `--prerun`, `--progress`, `--ERROR` (full backend traceback; default is a compact report highlighting your scene line).
-
-## Optional LaTeX
-
-Nothing TeX-related is installed by default — `Text(...)` works out of the box (Computer Modern, Noto fonts). When you need `Tex`/`TexText`:
-
-```python
-mc.install_latex()            # slim: fast, small; slim default preamble
-mc.install_latex(slim=False)  # complete: texlive-fonts-extra, tipa, original preamble
-```
-
-If a render fails with a LaTeX-related error, the error report itself shows this hint.
-
-## Other magics
-
-```python
-%manimgl_file --gpu -qm my_scenes.py MyScene   # render from a .py file on disk
-
-%manimgl_download             # download the newest MP4
-%manimgl_download MyScene     # newest MP4 of that scene (partial renders too)
-
-%openfile /content/manimGL/manimlib/scene/scene.py:114   # preview + Colab editor (auto backup)
-%filebackups /path/file.py    # list backups
-%restorefile /path/file.py    # restore newest backup
-
-mc.enable_autocomplete()      # refresh the IDE bridge (manimlib autocomplete)
-mc.status()                   # same as %manimgl_status, returns a dict
-```
-
-## Upgrading inside a running runtime
-
-`pip install --force-reinstall` writes new files, but Python keeps the OLD
-module loaded if it was already imported. After upgrading, either restart the
-runtime, or purge the module cache:
-
-```python
-!pip install -q --no-deps --force-reinstall git+https://github.com/myabdur212121-afk/manimgl-colab.git
-
-import sys
-for name in list(sys.modules):
-    if name.startswith("manimgl_colab"):
-        del sys.modules[name]
-
-import manimgl_colab as mc
-print(mc.__version__)      # verify the new version is active
-mc.register_magics()       # re-register the new magics
-```
-
-## Troubleshooting
-
-**`Line magic function %manimgl_file not found`**
-You are running a stale, previously-imported module version. Use the upgrade
-snippet above (or restart the runtime and rerun setup).
-
-**`No scene named X found` → interactive chooser → `EOFError`/`SystemExit`**
-ManimGL only renders classes **defined in the rendered source** — imported
-classes are ignored. So the `%%manimgl` cell must contain the full
-`class X(Scene):` code below the magic line. To render a scene that lives in
-a file instead (e.g. downloaded with `wget`), use:
-
-```python
-%manimgl_file --gpu -qm ultimate_stress_test.py UltimateStressTest
-```
-
-Since v1.1.0 the magic detects this before rendering and prints exactly this fix.
-
-## How the GPU mode works (and why it is not fake)
-
-1. `nvidia-smi` must report a GPU and kernel-driver version.
-2. The matching NVIDIA **userspace** EGL libraries are used — taken from the runtime image when present, otherwise downloaded as exact-version `.deb`s and extracted under `/content` (the system driver is never replaced).
-3. A standalone **EGL** OpenGL 4.3+ context is created and `GL_RENDERER` must be a real NVIDIA adapter — verified at switch time **and again inside every render process**.
-4. The renderer string is printed with every render as proof.
-
-CPU mode sets `LIBGL_ALWAYS_SOFTWARE=1` + Mesa EGL (surfaceless llvmpipe) explicitly — software rendering is a labelled choice, never a disguise.
-
-## Persistence
-
-A new/reset Colab runtime loses `/content`. Rerun Cell 1 + `mc.setup()` (idempotent — fast when things already exist). Copy videos you want to keep to Drive or download them.
-
----
-
-## বাংলা সংক্ষিপ্ত গাইড
-
-```python
-# সেল ১
-!pip install -q --no-deps git+https://github.com/myabdur212121-afk/manimgl-colab.git
-
-# সেল ২
-import manimgl_colab as mc
-mc.setup()            # ইঞ্জিন ইনস্টল + সব magic রেজিস্টার
-mc.backend("gpu")     # GPU রানটাইমে; CPU-তে ফিরতে mc.backend("cpu")
-mc.install_latex()    # শুধু Tex/TexText দরকার হলে
-```
-
-```python
-# সেল ৩
+# Cell 2 — render
 %%manimgl -qm MyScene
 from manimlib import *
 
 class MyScene(Scene):
     def construct(self):
-        self.play(ShowCreation(Circle()))
+        square = Square(color=BLUE).set_fill(BLUE, 0.5)
+        self.play(ShowCreation(square))
+        self.play(Rotate(square, PI / 2))
 ```
 
-- প্রতিটা রেন্ডারে আসল `GL_RENDERER` দেখানো হয় — GPU আসল কি না নিজের চোখে দেখবেন।
-- GPU চেয়েছেন কিন্তু GPU নেই → স্পষ্ট error; লুকিয়ে CPU-তে চালানো হয় **না**।
-- `%manimgl_status` দিয়ে যেকোনো সময় যাচাই করুন।
+While rendering you see **one live progress card** (percent, it/s, ETA, backend
+proof). When it finishes you see **the video — nothing else**. All details stay
+available on demand (see *Information commands* below).
+
+---
+
+## Backends: CPU ↔ GPU, honestly
+
+```python
+mc.use_cpu()   # software rendering (llvmpipe) — works on any runtime
+mc.use_gpu()   # NVIDIA EGL — requires a GPU runtime (Runtime ▸ Change runtime type ▸ GPU)
+```
+
+- Every render prints the **actual `GL_RENDERER` string** from the render
+  process itself — that is the proof of what really rendered your frames.
+- `use_gpu()` on a CPU runtime raises a **strict error**. There is **no silent
+  fallback**: you always know which hardware you used.
+- Switch any time; the choice persists per session.
+
+### NVENC (GPU video encoding)
+
+On GPU runtimes the encoder is probed with a **real test encode** (not just
+`ffmpeg -encoders`, which lies). If NVENC genuinely works, `h264_nvenc` is used
+automatically — the biggest win at `-qp`/`-qk`. If an NVENC render fails due to
+driver quirks it falls back to `libx264` **once, visibly** (the log card shows
+`encoder: libx264 (fallback)`).
+
+---
+
+## `%%manimgl` — the cell magic
+
+```
+%%manimgl [flags] SceneName
+```
+
+| Flag | Meaning |
+|---|---|
+| `-ql` | 480p15 (low) |
+| `-qm` | 720p30 (medium, good default) |
+| `-qh` | 1080p60 (high) |
+| `-qp` | 1440p60 (2K) |
+| `-qk` | 2160p60 (4K) |
+| `--draft` | 360p15 — fastest iteration |
+| `--gpu` / `--cpu` | override backend for this render only |
+| `--jobs N` | experimental parallel rendering (see below) |
+| `--no-prerun` | skip the counting pass (progress shows it/s instead of %) |
+| `--verbose` / `-v` | stream the raw ManimGL log while rendering |
+| `--ERROR` | show **all** traceback frames (library frames included) |
+| `--display-width W` | video player width in px (default 640) |
+
+Notes:
+
+- Comments or a docstring **above** the magic line are fine — the magic is
+  hoisted automatically:
+
+  ```python
+  # my experiment
+  """notes to self"""
+  %%manimgl -qm MyScene
+  ...
+  ```
+
+- The scene class must be defined **in the cell** (each render runs in a clean
+  subprocess for reproducibility).
+- `%manimgl_file path.py:SceneName -qh` renders a scene from a file instead.
+
+### Live progress
+
+By default a cheap **prerun pass** counts total frames first, so the progress
+card shows a real percentage and ETA. If a scene cannot survive the prerun pass
+(rare — e.g. `TracingTail`-style updaters left attached during a `Transform`),
+the render **auto-retries without prerun** and still succeeds; you just get
+it/s instead of %. `--no-prerun` opts out manually.
+
+---
+
+## Information commands (clean output policy)
+
+During render: **only the progress card**. After render: **only the video**
+plus a one-line summary strip. Everything else is on demand, as formatted HTML:
+
+| Command | Shows |
+|---|---|
+| `%manimgl_status` | backend, verified renderer, OpenGL, NVENC, LaTeX, versions |
+| `%manimgl_log` | full card for the last render: timings, frames, encoder, proof — plus the raw ManimGL log in a collapsible section |
+| `%manimgl_backend gpu` / `cpu` | switch backend |
+| `%manimgl_download` | download the last video |
+
+---
+
+## Error reports
+
+Failures render a ManimCE-style panel: syntax-highlighted frames from **your**
+code, the exact line marked with `❱` and a caret under the offending span,
+library frames collapsed (expand with `--ERROR`), a hint when the error is a
+known gotcha, the raw log in a collapsible section, and a red final strip with
+`ExceptionType: message`.
+
+---
+
+## `--jobs N` — experimental parallel rendering
+
+```python
+%%manimgl -qk --jobs 2 MyScene
+```
+
+Splits the scene's animations into `N` chunks (ManimGL `-n start,end` slices),
+renders them in parallel processes and losslessly concatenates the results
+(`ffmpeg -c copy`). The output is verified to match the serial render.
+
+Honest caveats:
+
+- Speed-up is **less than N×**: each worker still fast-forwards through the
+  animations before its chunk, and the prerun/counting pass is serial.
+- It pays off on **long scenes at high quality** with many animations; for
+  short scenes the overhead makes it *slower*.
+- Scenes must be **deterministic** (seed your randomness) and must not rely on
+  state mutated across animation boundaries in ways skipping breaks — the same
+  rule as ManimGL's own `-n` flag.
+- CPU rendering saturates more cores this way; on GPU runtimes the win is
+  smaller (the GL pipeline is shared).
+
+### A note on "GPU utilization"
+
+ManimGL is bottlenecked by single-threaded Python and video encoding, not by
+the GPU. 100% GPU usage is not a real lever. The honest speed levers are:
+NVENC encoding (automatic), `--jobs`, `--draft` while iterating, and lower
+quality until the final render.
+
+---
+
+## LaTeX (optional, on demand)
+
+```python
+mc.install_latex()            # slim TinyTeX-style set, enough for Tex/MathTex
+mc.install_latex(slim=False)  # full scheme if you need exotic packages
+```
+
+Renders using `Tex`/`TexText` fail with a clear hint until LaTeX is installed.
+
+---
+
+## Editor comfort
+
+`setup()` also enables an **editor bridge** so Colab's language server resolves
+`manimlib` — autocomplete works and the yellow "missing import" underlines
+disappear.
+
+File helpers: `%openfile path.py:114`, `%restorefile path.py`,
+`%filebackups path.py`.
+
+---
+
+## Upgrading
+
+```python
+!pip install -q --force-reinstall --no-deps git+https://github.com/myabdur212121-afk/manimgl-colab.git
+import sys
+for name in [m for m in sys.modules if m.startswith("manimgl_colab")]:
+    del sys.modules[name]
+import manimgl_colab as mc
+mc.register_magics()
+```
+
+## Examples
+
+- `examples/rotating_sphere.py` — minimal 3D scene.
+- `examples/ultimate_stress_test.py` — 45 s, 25 animations: streamlines, 3D
+  surfaces, Lorenz attractor with tracing tails, particle fields. Renders in
+  ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
+
+## Changelog
+
+**2.0.0**
+- ManimCE-style rich error panels (highlighted frames, collapsed library frames, hints).
+- Live HTML progress card with real % + ETA (prerun pass, auto-disables when unsafe).
+- NVENC auto-detection via real test encode; one-shot visible libx264 fallback.
+- Experimental `--jobs N` parallel rendering with lossless concat.
+- Clean-output policy: progress → video only; info via `%manimgl_log` / `%manimgl_status`.
+- `%%manimgl` works under leading comments/docstrings (input transformer).
+- Editor bridge auto-enabled: autocomplete + no yellow underlines.
+- New flags: `--jobs`, `--no-prerun`, `--verbose`, `--ERROR`, `--display-width`.
+
+**1.1.1** — first public release: isolated venv install, verified CPU/GPU
+backends, strict no-fallback GPU errors, on-demand LaTeX, `%%manimgl` magic.
 
 ## License
 

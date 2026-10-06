@@ -100,7 +100,6 @@ def enable_autocomplete() -> dict[str, object]:
         "pth_file": str(pth_file) if pth_file else None,
         "package_link": str(link) if link else None,
     }
-    print("ManimGL editor bridge enabled.")
-    print(f"Resolved module: {result['resolved']}")
-    print(f"Autocomplete symbols: {result['symbols']}")
+    print(f"Editor bridge: manimlib resolved, {result['symbols']} symbols → "
+          "autocomplete + no yellow underlines")
     return result

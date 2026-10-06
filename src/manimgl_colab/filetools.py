@@ -355,10 +355,7 @@ def register_file_magics() -> None:
         magic_name="filebackups",
     )
 
-    print("File shortcuts registered successfully.")
-    print("Open:     %openfile /path/to/file.py:114")
-    print("Restore:  %restorefile /path/to/file.py")
-    print("Backups:  %filebackups /path/to/file.py")
+
 
 
 if __name__ == "__main__":

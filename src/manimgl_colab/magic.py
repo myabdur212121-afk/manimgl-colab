@@ -1,98 +1,73 @@
 """The unified ManimCE-style ``%%manimgl`` cell magic (CPU/GPU switchable).
 
+Render output policy (user-specified):
+- while rendering → ONE live progress card (percent, animation, it/s, ETA)
+- on success      → the video only (card collapses to a slim strip)
+- information     → %manimgl_log (last render report) / %manimgl_status
+
 Examples::
 
-    %%manimgl -ql MyScene                 # default backend (mc.backend(...))
-    %%manimgl --gpu -qm MyScene           # force verified NVIDIA GPU
-    %%manimgl --cpu --draft MyScene       # force honest CPU software render
-    %%manimgl -v WARNING -qh --ERROR MyScene
+    %%manimgl -qm MyScene
+    %%manimgl --gpu -qh --jobs 2 MyScene
+    %%manimgl --cpu --draft --verbose MyScene
+    %manimgl_file --gpu -qk ultimate_stress_test.py UltimateStressTest
 
-Line magics::
-
-    %manimgl_backend gpu        # switch default backend (strict verify)
-    %manimgl_status             # live renderer proof + configuration
-    %manimgl_download [Scene]   # download the newest MP4
+Flags: -ql -qm -qh -qp -qk --draft | --gpu --cpu | -v LEVEL | --ERROR
+       --no-prerun --verbose --jobs N --display-width W --progress-off
 """
 
 from __future__ import annotations
 
-import os
 import re
 import shlex
-import subprocess
 import time
 from pathlib import Path
 
-from . import paths
-from .backends import get_backend, is_nvidia_renderer, render_env, set_backend
-from .backends import status as backend_status
+from . import paths, ui
+from .backends import get_backend, is_nvidia_renderer, nvenc_available, render_env
+from .backends import set_backend, status
 from .errors import (
     ManimGLRenderError,
     display_error_report,
     load_error_report,
     strip_ansi,
 )
-
-PROOF_PATTERN = re.compile(r"\[manimgl-colab\] GL_RENDERER: (?P<renderer>.+)")
+from .progress import ProgressState, run_streaming
+from .transformer import register_transformer
 
 _QUALITY_FLAGS = {
-    "-ql": ["-l"],
-    "--quality=l": ["-l"],
-    "-qm": ["-m"],
-    "--quality=m": ["-m"],
-    "-qh": ["--hd"],
-    "--quality=h": ["--hd"],
-    "-qp": ["-r", "2560x1440"],
-    "--quality=p": ["-r", "2560x1440"],
-    "-qk": ["--uhd"],
-    "--quality=k": ["--uhd"],
+    "-ql": (["-l"], "480p"),
+    "--quality=l": (["-l"], "480p"),
+    "-qm": (["-m"], "720p"),
+    "--quality=m": (["-m"], "720p"),
+    "-qh": (["--hd"], "1080p"),
+    "--quality=h": (["--hd"], "1080p"),
+    "-qp": (["-r", "2560x1440"], "1440p"),
+    "--quality=p": (["-r", "2560x1440"], "1440p"),
+    "-qk": (["--uhd"], "4K"),
+    "--quality=k": (["--uhd"], "4K"),
 }
-
-
-def _run_and_capture(
-    command: list[str],
-    environment: dict[str, str],
-    *,
-    stream_output: bool,
-) -> tuple[int, str]:
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        env=environment,
-    )
-    output_parts: list[str] = []
-    assert process.stdout is not None
-    for line in process.stdout:
-        output_parts.append(line)
-        if stream_output and not line.startswith("[manimgl-colab]"):
-            print(line, end="", flush=True)
-    return process.wait(), "".join(output_parts)
 
 
 def _parse_line(line: str) -> dict:
     tokens = shlex.split(line)
     if not tokens:
-        raise ValueError(
-            "A scene class name is required. Example: %%manimgl -ql MyScene"
-        )
+        raise ValueError("A scene class name is required. Example: %%manimgl -ql MyScene")
     scene_name = tokens[-1]
     options = tokens[:-1]
 
     parsed = {
         "scene_name": scene_name,
         "render_options": ["-l"],
-        "quality_label": "-ql (low, 480p)",
+        "quality_label": "480p",
         "log_level": "WARNING",
         "display_width": 560,
-        "prerun": False,
-        "progress": False,
+        "prerun": True,
+        "verbose": False,
         "full_error": False,
         "backend_override": None,
+        "jobs": 1,
+        "user_vcodec": False,
         "extra": [],
     }
 
@@ -101,11 +76,11 @@ def _parse_line(line: str) -> dict:
         option = options[index]
         normalized = option.lower()
         if option in _QUALITY_FLAGS:
-            parsed["render_options"] = list(_QUALITY_FLAGS[option])
-            parsed["quality_label"] = option
+            parsed["render_options"], parsed["quality_label"] = _QUALITY_FLAGS[option]
+            parsed["render_options"] = list(parsed["render_options"])
         elif normalized == "--draft":
             parsed["render_options"] = ["-r", "640x360", "--fps", "15"]
-            parsed["quality_label"] = "draft (640x360 @ 15 FPS)"
+            parsed["quality_label"] = "draft"
         elif option in ("-v", "--verbosity"):
             if index + 1 >= len(options):
                 raise ValueError("-v must be followed by a log level.")
@@ -119,30 +94,33 @@ def _parse_line(line: str) -> dict:
                 raise ValueError("Display width must be at least 100 pixels.")
             parsed["display_width"] = width
             index += 1
+        elif option == "--jobs":
+            if index + 1 >= len(options):
+                raise ValueError("--jobs must be followed by a worker count.")
+            parsed["jobs"] = max(1, int(options[index + 1]))
+            index += 1
         elif normalized == "--gpu":
             parsed["backend_override"] = "gpu"
         elif normalized == "--cpu":
             parsed["backend_override"] = "cpu"
+        elif normalized in ("--no-prerun", "--noprerun"):
+            parsed["prerun"] = False
         elif normalized == "--prerun":
             parsed["prerun"] = True
-        elif normalized == "--progress":
-            parsed["progress"] = True
+        elif normalized == "--verbose":
+            parsed["verbose"] = True
         elif normalized in ("--error", "--full-error"):
             parsed["full_error"] = True
         else:
+            if option == "--vcodec":
+                parsed["user_vcodec"] = True
             parsed["extra"].append(option)
         index += 1
     return parsed
 
 
 def _ensure_scene_in_source(scene_name: str, source: str, origin: str) -> None:
-    """Fail fast with a clear message when the scene class is missing.
-
-    ManimGL only renders classes DEFINED in the rendered source file;
-    imported classes are ignored (extract_scene checks ``__module__``).
-    Without this check the renderer falls into an interactive scene
-    chooser, which dies with a confusing EOFError/SystemExit in Colab.
-    """
+    """Fail fast with a clear message when the scene class is missing."""
     if re.search(rf"class\s+{re.escape(scene_name)}\s*[(:]", source):
         return
     raise ValueError(
@@ -160,14 +138,18 @@ def _ensure_scene_in_source(scene_name: str, source: str, origin: str) -> None:
 def register_magics() -> None:
     """Register ``%%manimgl`` plus helper line magics in Colab/IPython."""
     from IPython import get_ipython
-    from IPython.display import Video, display
+    from IPython.display import HTML, Video, display
 
     ipython = get_ipython()
     if ipython is None:
         raise RuntimeError("Magics must be registered inside Google Colab or IPython.")
 
+    register_transformer()
     last_rendered_video: Path | None = None
 
+    # ------------------------------------------------------------------
+    # Core render pipeline (shared by %%manimgl and %manimgl_file)
+    # ------------------------------------------------------------------
     def _render(parsed: dict, source_text: str) -> None:
         nonlocal last_rendered_video
 
@@ -176,12 +158,9 @@ def register_magics() -> None:
         backend = parsed["backend_override"] or get_backend()
 
         if not paths.ENV_PYTHON.exists():
-            raise FileNotFoundError(
-                "ManimGL is not installed. Run mc.setup() first."
-            )
+            raise FileNotFoundError("ManimGL is not installed. Run mc.setup() first.")
         if backend == "gpu" and not paths.GPU_STATE.exists():
-            # Strict: prepare and verify the GPU now, or fail clearly.
-            set_backend("gpu")
+            set_backend("gpu")  # strict: verify now or fail clearly
 
         paths.VIDEO_DIR.mkdir(parents=True, exist_ok=True)
         paths.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -196,110 +175,163 @@ def register_magics() -> None:
 
         environment = render_env(backend)
 
-        optional: list[str] = []
-        if parsed["prerun"]:
-            optional.append("--prerun")
-        if parsed["progress"]:
-            optional.extend(["--show_animation_progress", "--leave_progress_bars"])
+        # Encoder selection: NVENC automatically on a verified GPU backend.
+        encoder = "libx264"
+        encoder_args: list[str] = []
+        if not parsed["user_vcodec"] and backend == "gpu" and nvenc_available():
+            encoder = "h264_nvenc"
+            encoder_args = ["--vcodec", "h264_nvenc"]
 
-        command = [
-            str(paths.ENV_PYTHON),
-            str(paths.RUNNER),
-            str(paths.SCENE_FILE),
-            scene_name,
-            "-w",
-            *parsed["render_options"],
-            "-c",
-            "#000000",
-            "--video_dir",
-            str(paths.VIDEO_DIR),
-            "--log-level",
-            parsed["log_level"],
-            *optional,
-            *parsed["extra"],
-        ]
+        def build_command(extra_encoder_args: list[str]) -> list[str]:
+            command = [
+                str(paths.ENV_PYTHON),
+                str(paths.RUNNER),
+                str(paths.SCENE_FILE),
+                scene_name,
+                "-w",
+                *parsed["render_options"],
+                "-c", "#000000",
+                "--video_dir", str(paths.VIDEO_DIR),
+                "--log-level", parsed["log_level"],
+                *extra_encoder_args,
+                *parsed["extra"],
+            ]
+            if parsed["prerun"] and parsed["jobs"] == 1:
+                command.append("--prerun")
+            return command
 
-        backend_label = (
-            "GPU — NVIDIA EGL (strict, verified)" if backend == "gpu"
-            else "CPU — Mesa software (honest)"
-        )
-        print("=" * 68)
-        print(f"ManimGL render — {scene_name}")
-        print("=" * 68)
-        print(f"Backend: {backend_label}")
-        print(f"Quality: {parsed['quality_label']}")
-        print(f"Error mode: {'FULL' if parsed['full_error'] else 'compact'}")
-        print("\n[1/3] Rendering...", flush=True)
+        live = ui.LiveDisplay()
+        render_start = time.perf_counter()
+        progress_seen = {"frames": False}
 
-        process_start = time.perf_counter()
-        stream = parsed["progress"] or parsed["log_level"] in ("INFO", "DEBUG")
-        return_code, raw_output = _run_and_capture(command, environment, stream_output=stream)
-        process_seconds = time.perf_counter() - process_start
+        def on_update(state: ProgressState) -> None:
+            if state.frames_done is not None:
+                progress_seen["frames"] = True
+            live.update(ui.progress_card(
+                scene=scene_name,
+                backend=backend,
+                quality=parsed["quality_label"],
+                renderer=state.renderer,
+                phase=state.phase,
+                percent=state.percent,
+                frames_done=state.frames_done,
+                frames_total=state.frames_total,
+                rate=state.rate,
+                eta=state.eta,
+                elapsed=time.perf_counter() - render_start,
+                anim_label=state.anim_label,
+                encoder=encoder if encoder != "libx264" else None,
+            ))
 
-        proof_match = PROOF_PATTERN.search(raw_output)
-        renderer = proof_match.group("renderer").strip() if proof_match else None
-        if renderer:
-            verdict = "GPU ✅" if is_nvidia_renderer(renderer) else "CPU (software)"
-            print(f"Proof — GL_RENDERER: {renderer}  →  {verdict}")
+        on_update(ProgressState())
+
+        num_plays = None
+        if parsed["jobs"] > 1:
+            from .parallel import render_parallel
+
+            return_code, raw_output, num_plays = render_parallel(
+                scene_name=scene_name,
+                base_command=build_command(encoder_args),
+                environment=environment,
+                jobs=parsed["jobs"],
+                on_update=on_update,
+            )
+        else:
+            return_code, raw_output = run_streaming(
+                build_command(encoder_args), environment, on_update,
+                verbose=parsed["verbose"],
+            )
+            # Self-healing: when the cheap prerun pass itself crashes (some
+            # scenes with point-count-changing updaters break ManimGL's skip
+            # machinery), silently retry without prerun.
+            if return_code != 0 and parsed["prerun"] and not progress_seen["frames"]:
+                parsed["prerun"] = False
+                parsed["prerun_auto_disabled"] = True
+                return_code, raw_output = run_streaming(
+                    build_command(encoder_args), environment, on_update,
+                    verbose=parsed["verbose"],
+                )
+            # NVENC can fail on exotic resolutions/driver issues: fall back once.
+            if return_code != 0 and encoder == "h264_nvenc" and (
+                "nvenc" in raw_output.lower() or "cuda" in raw_output.lower()
+            ):
+                encoder = "libx264 (fallback)"
+                return_code, raw_output = run_streaming(
+                    build_command([]), environment, on_update,
+                    verbose=parsed["verbose"],
+                )
+
+        process_seconds = time.perf_counter() - render_start
+        proof = re.search(r"\[manimgl-colab\] GL_RENDERER: (.+)", raw_output)
+        renderer = proof.group(1).strip() if proof else None
+        opengl = None
+        version_match = re.search(r"\[manimgl-colab\] GL_VERSION: (.+)", raw_output)
+        if version_match:
+            opengl = version_match.group(1).strip()
 
         if return_code != 0:
-            print(f"\nRender failed after {process_seconds:.2f} seconds.", flush=True)
+            live.update(ui.failed_strip(scene_name, process_seconds), force=True)
             report = load_error_report(raw_output)
             exception_type, message = display_error_report(
-                report,
-                raw_output,
-                full_mode=parsed["full_error"],
-                scene_name=scene_name,
+                report, raw_output,
+                full_mode=parsed["full_error"], scene_name=scene_name,
             )
+            ui.remember_render({
+                "scene": scene_name, "backend": backend, "renderer": renderer,
+                "opengl": opengl, "quality": parsed["quality_label"],
+                "encoder": encoder, "seconds": process_seconds,
+                "failed": True, "error": f"{exception_type}: {message}",
+                "jobs": parsed["jobs"],
+            }, raw_output)
             raise ManimGLRenderError(f"{exception_type}: {message}") from None
-
-        if not stream:
-            clean_output = strip_ansi(raw_output)
-            important = [
-                output_line
-                for output_line in clean_output.splitlines()
-                if ("WARNING" in output_line.upper() or "ERROR" in output_line.upper())
-                and not output_line.startswith("[manimgl-colab]")
-            ]
-            if important:
-                print("\n".join(important), flush=True)
-
-        print(f"[2/3] Render finished in {process_seconds:.2f} seconds.")
-        print("[3/3] Preparing video preview...", flush=True)
 
         if not expected_video.exists():
             candidates = sorted(
                 paths.VIDEO_DIR.glob(f"{scene_name}*.mp4"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
-            ) or sorted(
-                paths.VIDEO_DIR.glob("*.mp4"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
+                key=lambda path: path.stat().st_mtime, reverse=True,
             )
             if not candidates:
-                raise FileNotFoundError("Rendering completed, but no MP4 file was found.")
+                raise FileNotFoundError("Rendering completed, but no MP4 was found.")
             expected_video = candidates[0]
 
         last_rendered_video = expected_video
         size_mb = expected_video.stat().st_size / (1024 * 1024)
+
+        frame_counts = re.findall(r"(\d+)/(\d+)\s*\[", raw_output)
+        frames = frame_counts[-1][1] if frame_counts else None
+
+        live.update(ui.finished_strip(
+            scene=scene_name, backend=backend, renderer=renderer,
+            seconds=process_seconds, size_mb=size_mb,
+        ), force=True)
         attributes = (
             "controls autoplay muted loop "
             f'width="{parsed["display_width"]}" style="max-width:100%; height:auto;"'
         )
         display(Video(str(expected_video), embed=True, html_attributes=attributes))
 
-        print("\n" + "=" * 68)
-        print("Video ready")
-        print("=" * 68)
-        print(f"Path: {expected_video}")
-        print(f"Size: {size_mb:.2f} MB")
-        print(f"Backend: {backend.upper()}"
-              + (f"  |  Renderer: {renderer}" if renderer else ""))
-        print(f"Render time: {process_seconds:.2f} s  |  "
-              f"Total: {time.perf_counter() - total_start:.2f} s")
-        print(f"Download: %manimgl_download {scene_name}")
+        ui.remember_render({
+            "scene": scene_name,
+            "backend": backend,
+            "renderer": renderer,
+            "opengl": opengl,
+            "quality": parsed["quality_label"],
+            "encoder": encoder,
+            "encoder_fallback": encoder.endswith("(fallback)"),
+            "frames": frames or "—",
+            "seconds": process_seconds,
+            "total_seconds": time.perf_counter() - total_start,
+            "size_mb": size_mb,
+            "path": str(expected_video),
+            "jobs": parsed["jobs"],
+            "num_plays": num_plays,
+            "prerun_auto_disabled": parsed.get("prerun_auto_disabled", False),
+            "gpu_verified": bool(renderer and is_nvidia_renderer(renderer)),
+        }, raw_output)
 
+    # ------------------------------------------------------------------
+    # Magics
+    # ------------------------------------------------------------------
     def manimgl_magic(line: str, cell: str) -> None:
         parsed = _parse_line(line)
         _ensure_scene_in_source(parsed["scene_name"], cell, "this cell")
@@ -309,9 +341,12 @@ def register_magics() -> None:
         """Render a scene from a .py file: %manimgl_file [flags] path.py Scene"""
         tokens = shlex.split(line)
         if len(tokens) < 2:
-            print("Usage: %manimgl_file [flags] path/to/file.py SceneName")
-            print("Example: %manimgl_file --gpu -qm ultimate_stress_test.py "
-                  "UltimateStressTest")
+            display(HTML(
+                f'<div style="font:12.5px/1.6 {ui.MONO}; color:{ui.DIM};">'
+                "Usage: <b>%manimgl_file [flags] path/to/file.py SceneName</b><br>"
+                "Example: %manimgl_file --gpu -qm ultimate_stress_test.py "
+                "UltimateStressTest</div>"
+            ))
             return
         scene_name = tokens[-1]
         file_token = tokens[-2]
@@ -328,27 +363,29 @@ def register_magics() -> None:
                 f"File not found: {file_token} "
                 f"(searched: {', '.join(str(c) for c in candidates)})"
             )
-
         source_text = source_path.read_text(encoding="utf-8")
         _ensure_scene_in_source(scene_name, source_text, str(source_path))
-        parsed = _parse_line(" ".join([*flags, scene_name]))
-        print(f"Source file: {source_path}")
-        _render(parsed, source_text)
+        _render(_parse_line(" ".join([*flags, scene_name])), source_text)
+
+    def manimgl_log_magic(line: str) -> None:
+        """Professional report of the last render + full renderer log."""
+        display(HTML(ui.summary_card(ui.LAST_RENDER)))
 
     def manimgl_backend_magic(line: str) -> None:
-        """Switch the default backend: %manimgl_backend gpu | cpu"""
         choice = line.strip().lower()
         if choice not in ("cpu", "gpu"):
-            print("Usage: %manimgl_backend gpu   or   %manimgl_backend cpu")
-            print(f"Current default: {get_backend().upper()}")
+            display(HTML(
+                f'<div style="font:12.5px/1.6 {ui.MONO}; color:{ui.DIM};">'
+                "Usage: <b>%manimgl_backend gpu</b> or <b>%manimgl_backend cpu</b> "
+                f"· current default: <b>{get_backend().upper()}</b></div>"
+            ))
             return
         set_backend(choice)
 
     def manimgl_status_magic(line: str) -> None:
-        backend_status()
+        status()
 
     def manimgl_download_magic(line: str) -> None:
-        """Download the latest render, optionally selected by scene class name."""
         try:
             from google.colab import files
         except ImportError as error:
@@ -359,21 +396,17 @@ def register_magics() -> None:
         if requested_scene:
             candidates = sorted(
                 paths.VIDEO_DIR.glob(f"{requested_scene}*.mp4"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
+                key=lambda path: path.stat().st_mtime, reverse=True,
             )
-            if candidates:
-                selected = candidates[0]
+            selected = candidates[0] if candidates else None
         elif last_rendered_video is not None and last_rendered_video.exists():
             selected = last_rendered_video
         else:
             candidates = sorted(
                 paths.VIDEO_DIR.glob("*.mp4"),
-                key=lambda path: path.stat().st_mtime,
-                reverse=True,
+                key=lambda path: path.stat().st_mtime, reverse=True,
             )
-            if candidates:
-                selected = candidates[0]
+            selected = candidates[0] if candidates else None
 
         if selected is None or not selected.exists():
             raise FileNotFoundError(
@@ -381,31 +414,35 @@ def register_magics() -> None:
                 if requested_scene
                 else "No rendered MP4 was found. Render a scene first."
             )
-        print(f"Downloading: {selected.name} "
-              f"({selected.stat().st_size / (1024 * 1024):.2f} MB)")
         files.download(str(selected))
 
     ipython.register_magic_function(manimgl_magic, magic_kind="cell", magic_name="manimgl")
-    ipython.register_magic_function(
-        manimgl_file_magic, magic_kind="line", magic_name="manimgl_file"
-    )
-    ipython.register_magic_function(
-        manimgl_backend_magic, magic_kind="line", magic_name="manimgl_backend"
-    )
-    ipython.register_magic_function(
-        manimgl_status_magic, magic_kind="line", magic_name="manimgl_status"
-    )
-    ipython.register_magic_function(
-        manimgl_download_magic, magic_kind="line", magic_name="manimgl_download"
-    )
+    for name, function in [
+        ("manimgl_file", manimgl_file_magic),
+        ("manimgl_log", manimgl_log_magic),
+        ("manimgl_backend", manimgl_backend_magic),
+        ("manimgl_status", manimgl_status_magic),
+        ("manimgl_download", manimgl_download_magic),
+    ]:
+        ipython.register_magic_function(function, magic_kind="line", magic_name=name)
 
     from .filetools import register_file_magics
 
     register_file_magics()
 
-    from . import __version__ as _v
-    print(f"manimgl-colab v{_v} — magics registered:")
-    print("  %%manimgl [-ql|-qm|-qh|-qp|-qk|--draft] [--gpu|--cpu] [--ERROR] Scene")
-    print("  %manimgl_file [flags] path.py Scene   (render from a file on disk)")
-    print("  %manimgl_backend gpu|cpu   %manimgl_status   %manimgl_download [Scene]")
-    print("  %openfile  %filebackups  %restorefile")
+    from . import __version__
+
+    display(HTML(
+        f'<div style="border:1px solid {ui.BORDER}; border-radius:8px;'
+        f' background:{ui.BG}; padding:8px 14px; max-width:640px;'
+        f' font:12px/1.7 {ui.MONO}; color:{ui.DIM};">'
+        f'<span style="color:{ui.TEXT}; font-weight:600;">manimgl-colab '
+        f'v{__version__}</span> — magics ready<br>'
+        "<b style='color:#58a6ff;'>%%manimgl</b> "
+        "[-ql -qm -qh -qp -qk --draft] [--gpu --cpu] [--jobs N] [--ERROR] Scene<br>"
+        "<b style='color:#58a6ff;'>%manimgl_file</b> [flags] path.py Scene · "
+        "<b style='color:#58a6ff;'>%manimgl_log</b> · "
+        "<b style='color:#58a6ff;'>%manimgl_status</b> · "
+        "<b style='color:#58a6ff;'>%manimgl_backend</b> gpu|cpu · "
+        "<b style='color:#58a6ff;'>%manimgl_download</b></div>"
+    ))

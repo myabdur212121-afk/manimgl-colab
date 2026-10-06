@@ -22,6 +22,8 @@ from __future__ import annotations
 from .autocomplete import enable_autocomplete
 from .backends import (
     detect_nvidia_gpu,
+    nvenc_available,
+    status_report,
     get_backend,
     prepare_gpu,
     probe,
@@ -68,8 +70,10 @@ __all__ = [
     "is_latex_installed",
     "patch_manimgl_source",
     "prepare_directories",
+    "nvenc_available",
     "prepare_gpu",
     "probe",
+    "status_report",
     "register_magics",
     "set_backend",
     "setup",
@@ -77,4 +81,4 @@ __all__ = [
     "verify_installation",
 ]
 
-__version__ = "1.1.1"
+__version__ = "2.0.0"
