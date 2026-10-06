@@ -304,7 +304,7 @@ def display_error_report(
     report: dict[str, Any],
     raw_output: str,
     *,
-    full_mode: bool = False,   # kept for API compat; full view is the default now
+    full_mode: bool = False,   # False: user frames only · True (--ERROR): full CE chain
     scene_name: str = "",
 ) -> tuple[str, str]:
     from IPython.display import HTML, display
@@ -316,6 +316,7 @@ def display_error_report(
     clean_raw = strip_ansi(raw_output).strip()
 
     body: list[str] = []
+    hidden_total = 0
     for chain_index, exception in enumerate(chain, start=1):
         if chain_index > 1:
             # the PREVIOUS entry's relation describes how it links forward
@@ -340,6 +341,17 @@ def display_error_report(
         if isinstance(syntax_frame, dict):
             frames.append(syntax_frame)
 
+        if not full_mode:
+            # Compact default: only the user's own frames + the error line.
+            # The full ManimCE-identical chain stays behind --ERROR.
+            user_frames = [f for f in frames if _is_user_frame(f)]
+            if not user_frames and frames:
+                user_frames = [frames[-1]]   # no user frame: show the raiser
+            hidden_total += len(frames) - len(user_frames)
+            for frame in user_frames:
+                body.append(_frame_html(frame))
+            continue
+
         # rich max_frames middle cut (traceback.py:785-805)
         if MAX_FRAMES and len(frames) > MAX_FRAMES:
             head = frames[: MAX_FRAMES // 2]
@@ -356,6 +368,15 @@ def display_error_report(
         else:
             for frame in frames:
                 body.append(_frame_html(frame))
+
+    if not full_mode and hidden_total:
+        body.append(
+            f'<div style="text-align:center; color:{DIM}; font-size:11.5px;'
+            f' margin:6px 0 2px 0;">… {hidden_total} library frame'
+            f'{"s" if hidden_total != 1 else ""} hidden — rerun with'
+            f' <b style="color:{ACCENT};">--ERROR</b> for the full'
+            f' ManimCE-style traceback …</div>'
+        )
 
     # ------------------------------------------------------------------
     # manimgl-colab extras (below the CE-identical part)

@@ -79,7 +79,7 @@ driver quirks it falls back to `libx264` **once, visibly** (the log card shows
 | `--no-prerun` | skip the counting pass (progress shows it/s instead of %) |
 | `--fps N` | override frame rate for any quality (e.g. `-qk --fps 30`) |
 | `--verbose` / `-v` | stream the raw ManimGL log while rendering |
-| `--ERROR` | show **all** traceback frames (library frames included) |
+| `--ERROR` | full ManimCE-style traceback (library frames included); default shows only your code |
 | `--display-width W` | video player width in px (default 640) |
 
 Notes:
@@ -122,10 +122,17 @@ plus a one-line summary strip. Everything else is on demand, as formatted HTML:
 
 ---
 
-## Error reports — ManimCE-identical
+## Error reports
 
-ManimCE prints errors with rich's traceback renderer; this package reproduces
-that renderer faithfully in HTML:
+Two views:
+
+- **Default (compact, for everyday use):** only the frames from **your cell**
+  — context lines, `❱` marker, exact-expression underline — plus the final
+  `ErrorType: message` line and hints. Library frames are summarized in one
+  dim note.
+- **`--ERROR` (full, for hard debugging):** the complete ManimCE-identical
+  traceback. ManimCE prints errors with rich's traceback renderer; this view
+  reproduces that renderer faithfully in HTML:
 
 - red rounded panel titled *Traceback (most recent call last)*
 - **every frame shown**, oldest first, `path:lineno in function` headers —
@@ -214,6 +221,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.3.0**
+- Compact error view is now the default: your frames + error line only; `--ERROR` shows the full ManimCE-identical chain.
 
 **2.2.0**
 - Error reports rebuilt to be ManimCE-identical (rich traceback port): all frames, 3-line context, exact-expression underline via `co_positions()`, cell-accurate line numbers, chained-exception separators.
