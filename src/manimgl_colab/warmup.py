@@ -35,6 +35,15 @@ class WarmError(RuntimeError):
     """Any warm-path failure; callers fall back to the cold path."""
 
 
+def _gpu_state() -> Optional[dict]:
+    try:
+        from .backends import _load_gpu_state
+
+        return _load_gpu_state()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _request(payload: dict, timeout: float = 10.0) -> dict:
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     client.settimeout(timeout)
@@ -74,11 +83,14 @@ def is_active() -> bool:
 
 def start(wait: bool = True) -> dict:
     """Start (or adopt) the warm worker; returns its ping info."""
+    gpu_state = _gpu_state()
     info = ping()
     if info:
-        if info.get("version") == _package_version():
+        if (info.get("version") == _package_version()
+                and (gpu_state is None or info.get("gpu_ready"))):
             return info
-        stop()   # version mismatch after an upgrade: restart cleanly
+        # restart: package upgraded, or GPU became available since launch
+        stop()
 
     if not paths.ENV_PYTHON.exists():
         raise WarmError("ManimGL is not installed. Run mc.setup() first.")
@@ -94,11 +106,20 @@ def start(wait: bool = True) -> dict:
     environment = os.environ.copy()
     environment.setdefault("PYGLET_HEADLESS", "true")
     environment.setdefault("PYOPENGL_PLATFORM", "egl")
+    gpu_ready = gpu_state is not None
+    if gpu_ready:
+        # LD_LIBRARY_PATH only takes effect at process start, so the worker
+        # must be BORN with the NVIDIA library path to serve GPU renders.
+        library_dir = gpu_state["library_dir"]
+        environment["LD_LIBRARY_PATH"] = (
+            f"{library_dir}:/usr/lib64-nvidia:"
+            f"{environment.get('LD_LIBRARY_PATH', '')}"
+        )
 
     log_handle = open(WORKER_LOG, "ab")
     process = subprocess.Popen(
         [str(paths.ENV_PYTHON), str(WORKER_SCRIPT), str(paths.RUNNER),
-         str(SOCKET_PATH), _package_version()],
+         str(SOCKET_PATH), _package_version(), "1" if gpu_ready else "0"],
         stdout=log_handle, stderr=log_handle,
         env=environment, start_new_session=True,
     )
@@ -174,6 +195,15 @@ def run_via_warm(
         raise WarmError("Unexpected command shape for the warm path.")
     if not is_active():
         raise WarmError("Warm worker is not active.")
+    if environment.get("MANIMGL_COLAB_EXPECT") == "gpu":
+        info = ping()
+        if not info or not info.get("gpu_ready"):
+            # Worker was born before the GPU was prepared — rebirth with the
+            # NVIDIA library path (start() picks it up from the GPU state).
+            start()
+            info = ping()
+            if not info or not info.get("gpu_ready"):
+                raise WarmError("Warm worker is not GPU-ready.")
 
     JOB_DIR.mkdir(parents=True, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]

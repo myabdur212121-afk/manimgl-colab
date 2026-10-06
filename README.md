@@ -135,6 +135,13 @@ leaks between renders, and the worker auto-restarts after upgrades. Any warm
 failure silently falls back to the classic cold path. `--jobs N` renders
 always use the cold path.
 
+**GPU:** the dynamic linker only reads `LD_LIBRARY_PATH` at process start, so
+when the GPU backend is prepared the worker is launched with the NVIDIA
+library path already in place — one worker then serves **both** CPU and GPU
+renders (glvnd vendor selection is applied per render). If the GPU becomes
+available after the worker started, the next GPU render transparently
+restarts the worker GPU-ready.
+
 ## Information commands (clean output policy)
 
 During render: **only the progress card**. After render: **only the video**
@@ -248,6 +255,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.5.1**
+- Warm mode now fully supports the GPU backend: the worker is born with the NVIDIA library path (LD_LIBRARY_PATH is start-time-only) and serves both CPU and GPU renders; auto-rebirth when the GPU is prepared later.
 
 **2.5.0**
 - Opt-in warm mode (`mc.warm()` / `%manimgl_warm`): resident fork-server keeps the engine preloaded — render startup drops from ~4 s to <1 s with full per-render isolation preserved; `--cold` flag and automatic cold fallback.
