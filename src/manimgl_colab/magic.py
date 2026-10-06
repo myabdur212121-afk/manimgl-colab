@@ -346,6 +346,24 @@ def register_magics() -> None:
         if version_match:
             opengl = version_match.group(1).strip()
 
+        if (return_code != 0 and parsed.get("start_mode") == "warm"
+                and backend == "gpu" and "not NVIDIA" in raw_output):
+            # Safety net: the warm worker's GL stack cannot deliver a real
+            # NVIDIA context (vendor sealed wrong at its birth). Retire it and
+            # redo this render on the proven cold path — never surface this.
+            from . import warmup as _warmup
+
+            _warmup.stop()
+            parsed["start_mode"] = "cold (warm gpu fallback)"
+            return_code, raw_output = run_streaming(
+                build_command(encoder_args), environment, on_update,
+                verbose=parsed["verbose"],
+            )
+            proof = re.search(r"\[manimgl-colab\] GL_RENDERER: (.+)", raw_output)
+            renderer = proof.group(1).strip() if proof else None
+            version_match = re.search(r"\[manimgl-colab\] GL_VERSION: (.+)", raw_output)
+            opengl = version_match.group(1).strip() if version_match else None
+
         if return_code != 0:
             live.update(ui.failed_strip(scene_name, process_seconds), force=True)
             report = load_error_report(raw_output)
@@ -521,8 +539,8 @@ def register_magics() -> None:
         if choice in ("on", "start", "true", "1"):
             info = warm_module.start()
             strip(
-                f"🔥 Warm worker ready — pid {info.get('pid')} · next renders "
-                "start in &lt;1s (engine preloaded)", ui.ACCENT,
+                f"🔥 Warm worker ready ({info.get('backend', 'cpu').upper()}) — "
+                f"pid {info.get('pid')} · next renders start in &lt;1s", ui.ACCENT,
             )
         elif choice in ("off", "stop", "false", "0"):
             stopped = warm_module.stop()
@@ -535,7 +553,8 @@ def register_magics() -> None:
             if info and info.get("version") == __import__(
                 "manimgl_colab").__version__:
                 strip(
-                    f"🔥 Warm: ON · pid {info['pid']} · {info['served']} render"
+                    f"🔥 Warm: ON ({info.get('backend', 'cpu').upper()}) · pid "
+                    f"{info['pid']} · {info['served']} render"
                     f"{'s' if info['served'] != 1 else ''} served", ui.ACCENT,
                 )
             else:

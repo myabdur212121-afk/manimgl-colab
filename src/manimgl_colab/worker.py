@@ -18,13 +18,15 @@ Protocol (newline-delimited JSON over a unix socket):
     child stdout+stderr -> log file; on exit {"code": c} is written to done.
 
 Standard library only.
-argv: worker.py RUNNER_PATH SOCKET_PATH VERSION GPU_READY("1"/"0")
+argv: worker.py RUNNER_PATH SOCKET_PATH VERSION BACKEND("cpu"/"gpu")
 
-GPU note: LD_LIBRARY_PATH is read by the dynamic linker at PROCESS START and
-cannot be changed afterwards — so when the GPU driver state is prepared, the
-worker itself is launched with the NVIDIA library path (GPU_READY=1).  CPU
-renders still work in the same worker because glvnd's vendor selection
-(__EGL_VENDOR_LIBRARY_FILENAMES, applied per child) is read at runtime.
+BACKEND note: importing manimlib loads glvnd's libEGL and the EGL vendor is
+enumerated and CACHED per process at that moment (verified: libEGL_mesa shows
+up in the parent's /proc/maps right after import).  A forked child therefore
+CANNOT switch vendors via environment variables — so the worker is born with
+the FULL EGL environment of one backend (NVIDIA json + driver LD path for
+gpu; Mesa for cpu) and only serves renders of that backend.  Switching
+backends triggers a one-time worker rebirth, handled notebook-side.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ import threading
 RUNNER_PATH = sys.argv[1]
 SOCKET_PATH = sys.argv[2]
 VERSION = sys.argv[3] if len(sys.argv) > 3 else "?"
-GPU_READY = len(sys.argv) > 4 and sys.argv[4] == "1"
+BACKEND = sys.argv[4] if len(sys.argv) > 4 else "cpu"
 
 os.environ.setdefault("PYGLET_HEADLESS", "true")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
@@ -143,7 +145,7 @@ def main() -> None:
             if operation == "ping":
                 connection.sendall((json.dumps({
                     "ok": True, "version": VERSION, "served": SERVED,
-                    "pid": os.getpid(), "gpu_ready": GPU_READY,
+                    "pid": os.getpid(), "backend": BACKEND,
                 }) + "\n").encode())
             elif operation == "shutdown":
                 connection.sendall(b'{"ok": true}\n')

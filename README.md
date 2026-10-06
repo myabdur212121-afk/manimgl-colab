@@ -135,12 +135,14 @@ leaks between renders, and the worker auto-restarts after upgrades. Any warm
 failure silently falls back to the classic cold path. `--jobs N` renders
 always use the cold path.
 
-**GPU:** the dynamic linker only reads `LD_LIBRARY_PATH` at process start, so
-when the GPU backend is prepared the worker is launched with the NVIDIA
-library path already in place — one worker then serves **both** CPU and GPU
-renders (glvnd vendor selection is applied per render). If the GPU becomes
-available after the worker started, the next GPU render transparently
-restarts the worker GPU-ready.
+**Backends:** the EGL vendor (NVIDIA vs Mesa) is chosen and cached by glvnd
+while the engine is being imported — a forked child cannot switch it later.
+The worker is therefore **born for one backend** with that backend's full EGL
+environment; rendering on the other backend transparently rebirths the worker
+once (~one engine import), then it is warm again. The per-render GL_RENDERER
+proof stays exact. As a final safety net, if a warm GPU render ever fails the
+strict NVIDIA check, the worker is retired and the render is automatically
+redone on the classic cold path — strict mode is never weakened.
 
 ## Information commands (clean output policy)
 
@@ -255,6 +257,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.6.0**
+- Warm workers are now born per backend (glvnd seals the EGL vendor at engine import, so forked children can't switch vendors). Backend switches rebirth the worker once; a strict-GPU failure on the warm path auto-retries cold. Fixes GPU renders failing with "context is llvmpipe" under warm mode.
 
 **2.5.1**
 - Warm mode now fully supports the GPU backend: the worker is born with the NVIDIA library path (LD_LIBRARY_PATH is start-time-only) and serves both CPU and GPU renders; auto-rebirth when the GPU is prepared later.

@@ -76,7 +76,7 @@ def warm(enable: bool = True):
     from . import warmup as _warm_module
 
     if enable:
-        return _warm_module.start()
+        return _warm_module.start()  # current default backend
     return _warm_module.stop()
 
 
@@ -108,4 +108,4 @@ __all__ = [
     "verify_installation",
 ]
 
-__version__ = "2.5.1"
+__version__ = "2.6.0"

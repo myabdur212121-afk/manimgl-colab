@@ -35,13 +35,16 @@ class WarmError(RuntimeError):
     """Any warm-path failure; callers fall back to the cold path."""
 
 
-def _gpu_state() -> Optional[dict]:
-    try:
-        from .backends import _load_gpu_state
+def _worker_env(backend: str) -> dict:
+    """Full render environment of ``backend`` — the worker must be BORN with
+    it: the dynamic linker reads LD_LIBRARY_PATH only at process start, and
+    glvnd enumerates+caches the EGL vendor during the engine import."""
+    from .backends import render_env
 
-        return _load_gpu_state()
-    except Exception:  # noqa: BLE001
-        return None
+    environment = render_env(backend)
+    environment.setdefault("PYGLET_HEADLESS", "true")
+    environment.setdefault("PYOPENGL_PLATFORM", "egl")
+    return environment
 
 
 def _request(payload: dict, timeout: float = 10.0) -> dict:
@@ -81,15 +84,18 @@ def is_active() -> bool:
     return bool(info) and info.get("version") == _package_version()
 
 
-def start(wait: bool = True) -> dict:
-    """Start (or adopt) the warm worker; returns its ping info."""
-    gpu_state = _gpu_state()
+def start(backend: Optional[str] = None, wait: bool = True) -> dict:
+    """Start (or adopt) the warm worker for ``backend``; returns ping info."""
+    if backend is None:
+        from .backends import get_backend
+
+        backend = get_backend()
     info = ping()
     if info:
         if (info.get("version") == _package_version()
-                and (gpu_state is None or info.get("gpu_ready"))):
+                and info.get("backend") == backend):
             return info
-        # restart: package upgraded, or GPU became available since launch
+        # restart: package upgraded, or the backend changed since launch
         stop()
 
     if not paths.ENV_PYTHON.exists():
@@ -103,23 +109,15 @@ def start(wait: bool = True) -> dict:
     except OSError:
         pass
 
-    environment = os.environ.copy()
-    environment.setdefault("PYGLET_HEADLESS", "true")
-    environment.setdefault("PYOPENGL_PLATFORM", "egl")
-    gpu_ready = gpu_state is not None
-    if gpu_ready:
-        # LD_LIBRARY_PATH only takes effect at process start, so the worker
-        # must be BORN with the NVIDIA library path to serve GPU renders.
-        library_dir = gpu_state["library_dir"]
-        environment["LD_LIBRARY_PATH"] = (
-            f"{library_dir}:/usr/lib64-nvidia:"
-            f"{environment.get('LD_LIBRARY_PATH', '')}"
-        )
+    try:
+        environment = _worker_env(backend)
+    except Exception as error:  # e.g. GPU backend not prepared yet
+        raise WarmError(f"Cannot build {backend!r} environment: {error}") from error
 
     log_handle = open(WORKER_LOG, "ab")
     process = subprocess.Popen(
         [str(paths.ENV_PYTHON), str(WORKER_SCRIPT), str(paths.RUNNER),
-         str(SOCKET_PATH), _package_version(), "1" if gpu_ready else "0"],
+         str(SOCKET_PATH), _package_version(), backend],
         stdout=log_handle, stderr=log_handle,
         env=environment, start_new_session=True,
     )
@@ -195,15 +193,18 @@ def run_via_warm(
         raise WarmError("Unexpected command shape for the warm path.")
     if not is_active():
         raise WarmError("Warm worker is not active.")
-    if environment.get("MANIMGL_COLAB_EXPECT") == "gpu":
+    requested_backend = environment.get("MANIMGL_COLAB_EXPECT", "cpu")
+    info = ping()
+    if not info or info.get("backend") != requested_backend:
+        # Backend switched since the worker was born — one-time rebirth with
+        # the matching EGL environment (vendor choice is sealed at birth).
+        start(backend=requested_backend)
         info = ping()
-        if not info or not info.get("gpu_ready"):
-            # Worker was born before the GPU was prepared — rebirth with the
-            # NVIDIA library path (start() picks it up from the GPU state).
-            start()
-            info = ping()
-            if not info or not info.get("gpu_ready"):
-                raise WarmError("Warm worker is not GPU-ready.")
+        if not info or info.get("backend") != requested_backend:
+            raise WarmError(
+                f"Warm worker could not be reborn for backend "
+                f"{requested_backend!r}."
+            )
 
     JOB_DIR.mkdir(parents=True, exist_ok=True)
     job_id = uuid.uuid4().hex[:12]
