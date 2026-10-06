@@ -39,8 +39,9 @@ available on demand (see *Information commands* below).
 ## Backends: CPU ↔ GPU, honestly
 
 ```python
-mc.use_cpu()   # software rendering (llvmpipe) — works on any runtime
-mc.use_gpu()   # NVIDIA EGL — requires a GPU runtime (Runtime ▸ Change runtime type ▸ GPU)
+mc.use_cpu()         # software rendering (llvmpipe) — works on any runtime
+mc.use_gpu()         # NVIDIA EGL — requires a GPU runtime (Runtime ▸ Change runtime type ▸ GPU)
+mc.backend("gpu")    # same as use_gpu(); mc.backend() returns the current one
 ```
 
 - Every render prints the **actual `GL_RENDERER` string** from the render

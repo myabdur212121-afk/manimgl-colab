@@ -56,6 +56,16 @@ def backend(name: str | None = None, *, force: bool = False):
     return set_backend(name, force=force)
 
 
+def use_gpu(*, force: bool = False):
+    """Switch rendering to the NVIDIA GPU (strict: fails loudly without one)."""
+    return set_backend("gpu", force=force)
+
+
+def use_cpu():
+    """Switch rendering to the CPU (llvmpipe software renderer)."""
+    return set_backend("cpu")
+
+
 __all__ = [
     "backend",
     "create_virtual_environment",
@@ -78,7 +88,9 @@ __all__ = [
     "set_backend",
     "setup",
     "status",
+    "use_cpu",
+    "use_gpu",
     "verify_installation",
 ]
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
