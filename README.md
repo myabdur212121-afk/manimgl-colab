@@ -79,6 +79,7 @@ driver quirks it falls back to `libx264` **once, visibly** (the log card shows
 | `--no-prerun` | skip the counting pass (progress shows it/s instead of %) |
 | `--fps N` | override frame rate for any quality (e.g. `-qk --fps 30`) |
 | `-s` / `--image` | render only the final frame as a PNG (poster/thumbnail) |
+| `--cold` | force the classic isolated start even when warm mode is on |
 | `--verbose` / `-v` | stream the raw ManimGL log while rendering |
 | `--ERROR` | full ManimCE-style traceback (library frames included); default shows only your code |
 | `--display-width W` | video player width in px (default 640) |
@@ -112,6 +113,27 @@ the render **auto-retries without prerun** and still succeeds; you just get
 it/s instead of %. `--no-prerun` opts out manually.
 
 ---
+
+## Warm mode — sub-second render starts (opt-in)
+
+Every render runs in a fresh subprocess, which costs ~4 s of engine imports
+before the first frame. ManimCE avoids this by keeping the library loaded in
+the notebook kernel; warm mode gives you the same feel **without giving up
+isolation**:
+
+```python
+mc.warm()          # one-time engine preload (~4s); after this, renders start in <1s
+mc.warm(False)     # back to classic cold starts
+%manimgl_warm on | off | status
+```
+
+How it stays safe: a resident worker inside the venv keeps `manimlib`
+imported and **forks** a pristine child per render. The child applies the
+render's environment, creates its own OpenGL context (GL proof still printed
+per render), renders and exits — crashes kill only the child, state never
+leaks between renders, and the worker auto-restarts after upgrades. Any warm
+failure silently falls back to the classic cold path. `--jobs N` renders
+always use the cold path.
 
 ## Information commands (clean output policy)
 
@@ -226,6 +248,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.5.0**
+- Opt-in warm mode (`mc.warm()` / `%manimgl_warm`): resident fork-server keeps the engine preloaded — render startup drops from ~4 s to <1 s with full per-render isolation preserved; `--cold` flag and automatic cold fallback.
 
 **2.4.0**
 - Static scenes (no animations) now auto-render a PNG image, exactly like ManimCE; `%manimgl_download` and `%manimgl_log` understand image outputs.

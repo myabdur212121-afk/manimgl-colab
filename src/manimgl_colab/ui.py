@@ -206,6 +206,7 @@ def summary_card(info: dict[str, Any], raw_log: str | None = None) -> str:
         _row("Output", f'<code style="font-size:12px;">{esc(info.get("path", "—"))}</code>'),
         _row("Type", "PNG image (static)" if info.get("output_type") == "image" else "MP4 video"),
         _row("Workers", esc(info.get("jobs", 1))),
+        _row("Start", esc(info.get("start_mode", "cold"))),
     ]
     if info.get("gpu_peak"):
         rows.append(_row("GPU peak", esc(info["gpu_peak"])))

@@ -13,7 +13,7 @@ Examples::
     %manimgl_file --gpu -qk ultimate_stress_test.py UltimateStressTest
 
 Flags: -ql -qm -qh -qp -qk --draft | --gpu --cpu | -v LEVEL | --ERROR
-       --no-prerun --verbose --jobs N --fps N -s/--image --display-width W --progress-off
+       --no-prerun --verbose --jobs N --fps N -s/--image --cold --display-width W --progress-off
 """
 
 from __future__ import annotations
@@ -69,6 +69,7 @@ def _parse_line(line: str) -> dict:
         "jobs": 1,
         "user_vcodec": False,
         "image_only": False,
+        "cold": False,
         "fps_override": None,
         "extra": [],
     }
@@ -83,6 +84,8 @@ def _parse_line(line: str) -> dict:
         elif normalized == "--draft":
             parsed["render_options"] = ["-r", "640x360", "--fps", "15"]
             parsed["quality_label"] = "draft"
+        elif normalized == "--cold":
+            parsed["cold"] = True
         elif option in ("-s", "--image"):
             # ManimGL's own machinery: skip_animations + write_file
             # => save_last_frame (config.py:272). Renders a PNG still.
@@ -177,7 +180,7 @@ def register_magics() -> None:
         """ManimGL writes a ~261-byte frameless MP4 container when a scene
         has zero animations — detect it so we can fall back to an image."""
         try:
-            if path.stat().st_size < 4096:
+            if path.stat().st_size < 1024:
                 return True
         except OSError:
             return True
@@ -285,6 +288,27 @@ def register_magics() -> None:
 
         on_update(ProgressState())
 
+        def _stream(stream_command: list) -> tuple:
+            """Warm worker when available (serial renders only), else the
+            classic isolated cold subprocess. Warm failures fall back."""
+            if parsed["jobs"] == 1 and not parsed["cold"]:
+                from .warmup import WarmError, is_active, run_via_warm
+
+                if is_active():
+                    try:
+                        result = run_via_warm(
+                            stream_command, environment, on_update,
+                            verbose=parsed["verbose"],
+                        )
+                        parsed["start_mode"] = "warm"
+                        return result
+                    except WarmError:
+                        parsed["start_mode"] = "cold (warm fallback)"
+            return run_streaming(
+                stream_command, environment, on_update,
+                verbose=parsed["verbose"],
+            )
+
         num_plays = None
         if parsed["jobs"] > 1:
             from .parallel import render_parallel
@@ -297,29 +321,20 @@ def register_magics() -> None:
                 on_update=on_update,
             )
         else:
-            return_code, raw_output = run_streaming(
-                build_command(encoder_args), environment, on_update,
-                verbose=parsed["verbose"],
-            )
+            return_code, raw_output = _stream(build_command(encoder_args))
             # Self-healing: when the cheap prerun pass itself crashes (some
             # scenes with point-count-changing updaters break ManimGL's skip
             # machinery), silently retry without prerun.
             if return_code != 0 and parsed["prerun"] and not progress_seen["frames"]:
                 parsed["prerun"] = False
                 parsed["prerun_auto_disabled"] = True
-                return_code, raw_output = run_streaming(
-                    build_command(encoder_args), environment, on_update,
-                    verbose=parsed["verbose"],
-                )
+                return_code, raw_output = _stream(build_command(encoder_args))
             # NVENC can fail on exotic resolutions/driver issues: fall back once.
             if return_code != 0 and encoder == "h264_nvenc" and (
                 "nvenc" in raw_output.lower() or "cuda" in raw_output.lower()
             ):
                 encoder = "libx264 (fallback)"
-                return_code, raw_output = run_streaming(
-                    build_command([]), environment, on_update,
-                    verbose=parsed["verbose"],
-                )
+                return_code, raw_output = _stream(build_command([]))
 
         if gpu_monitor is not None:
             gpu_monitor.stop()
@@ -364,10 +379,7 @@ def register_magics() -> None:
                 static_command = [
                     part for part in build_command([]) if part != "--prerun"
                 ] + ["-s"]
-                fallback_code, fallback_output = run_streaming(
-                    static_command, environment, on_update,
-                    verbose=parsed["verbose"],
-                )
+                fallback_code, fallback_output = _stream(static_command)
                 raw_output += "\n" + fallback_output
                 if fallback_code != 0 or not expected_image.exists():
                     raise FileNotFoundError(
@@ -430,6 +442,7 @@ def register_magics() -> None:
             "jobs": parsed["jobs"],
             "num_plays": num_plays,
             "prerun_auto_disabled": parsed.get("prerun_auto_disabled", False),
+            "start_mode": parsed.get("start_mode", "cold"),
             "gpu_peak": (
                 f"{gpu_monitor.peak_util}% util · {gpu_monitor.peak_encoder}% enc · "
                 f"{gpu_monitor.peak_vram:.1f} GB VRAM"
@@ -493,6 +506,44 @@ def register_magics() -> None:
     def manimgl_status_magic(line: str) -> None:
         status()
 
+    def manimgl_warm_magic(line: str) -> None:
+        from . import warmup as warm_module
+
+        choice = line.strip().lower() or "status"
+
+        def strip(text: str, color: str) -> None:
+            display(HTML(
+                f'<div style="font:12.5px/1.6 {ui.MONO}; color:{color};'
+                f' border-left:3px solid {color}; padding:4px 10px;'
+                f' margin:4px 0;">{text}</div>'
+            ))
+
+        if choice in ("on", "start", "true", "1"):
+            info = warm_module.start()
+            strip(
+                f"🔥 Warm worker ready — pid {info.get('pid')} · next renders "
+                "start in &lt;1s (engine preloaded)", ui.ACCENT,
+            )
+        elif choice in ("off", "stop", "false", "0"):
+            stopped = warm_module.stop()
+            strip(
+                "Warm worker stopped — renders use the classic isolated start."
+                if stopped else "Warm worker was not running.", ui.DIM,
+            )
+        else:
+            info = warm_module.ping()
+            if info and info.get("version") == __import__(
+                "manimgl_colab").__version__:
+                strip(
+                    f"🔥 Warm: ON · pid {info['pid']} · {info['served']} render"
+                    f"{'s' if info['served'] != 1 else ''} served", ui.ACCENT,
+                )
+            else:
+                strip(
+                    "Warm: OFF · enable with <b>%manimgl_warm on</b> "
+                    "(or mc.warm()) for &lt;1s render starts", ui.DIM,
+                )
+
     def manimgl_download_magic(line: str) -> None:
         try:
             from google.colab import files
@@ -531,6 +582,7 @@ def register_magics() -> None:
         ("manimgl_log", manimgl_log_magic),
         ("manimgl_backend", manimgl_backend_magic),
         ("manimgl_status", manimgl_status_magic),
+        ("manimgl_warm", manimgl_warm_magic),
         ("manimgl_download", manimgl_download_magic),
     ]:
         ipython.register_magic_function(function, magic_kind="line", magic_name=name)

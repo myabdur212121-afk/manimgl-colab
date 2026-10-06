@@ -66,6 +66,20 @@ def use_cpu():
     return set_backend("cpu")
 
 
+def warm(enable: bool = True):
+    """Keep the render engine preloaded for <1s render starts.
+
+    ``mc.warm()`` starts the warm worker (one-time ~engine-import cost);
+    ``mc.warm(False)`` stops it.  Renders keep full process isolation —
+    each one runs in a fresh fork of the pristine preloaded worker.
+    """
+    from . import warmup as _warm_module
+
+    if enable:
+        return _warm_module.start()
+    return _warm_module.stop()
+
+
 __all__ = [
     "backend",
     "create_virtual_environment",
@@ -90,7 +104,8 @@ __all__ = [
     "status",
     "use_cpu",
     "use_gpu",
+    "warm",
     "verify_installation",
 ]
 
-__version__ = "2.4.0"
+__version__ = "2.5.0"
