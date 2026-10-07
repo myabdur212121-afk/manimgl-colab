@@ -265,6 +265,9 @@ def register_magics() -> None:
             from .progress import GPUMonitor
 
             gpu_monitor = GPUMonitor().start()
+        from .progress import CPUMonitor
+
+        cpu_monitor = CPUMonitor().start()
 
         def on_update(state: ProgressState) -> None:
             if state.frames_done is not None:
@@ -283,7 +286,12 @@ def register_magics() -> None:
                 elapsed=time.perf_counter() - render_start,
                 anim_label=state.anim_label,
                 encoder=encoder if encoder != "libx264" else None,
-                gpu_line=gpu_monitor.line if gpu_monitor else None,
+                gpu_line=" · ".join(
+                    part for part in (
+                        gpu_monitor.line if gpu_monitor else None,
+                        cpu_monitor.line,
+                    ) if part
+                ) or None,
             ))
 
         on_update(ProgressState())
@@ -340,6 +348,7 @@ def register_magics() -> None:
 
         if gpu_monitor is not None:
             gpu_monitor.stop()
+        cpu_monitor.stop()
         process_seconds = time.perf_counter() - render_start
         proof = re.search(r"\[manimgl-colab\] GL_RENDERER: (.+)", raw_output)
         renderer = proof.group(1).strip() if proof else None
@@ -463,6 +472,9 @@ def register_magics() -> None:
             "num_plays": num_plays,
             "prerun_auto_disabled": parsed.get("prerun_auto_disabled", False),
             "start_mode": parsed.get("start_mode", "cold"),
+            "cpu_peak": (
+                f"{cpu_monitor.peak}%" if cpu_monitor.peak else None
+            ),
             "gpu_peak": (
                 f"{gpu_monitor.peak_util}% util · {gpu_monitor.peak_encoder}% enc · "
                 f"{gpu_monitor.peak_vram:.1f} GB VRAM"

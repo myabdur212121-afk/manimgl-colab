@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manimgl-colab"
-version = "2.7.0"
+version = "2.7.1"
 description = "ManimGL (3b1b) on Google Colab: one engine, honest CPU/GPU switching, ManimCE-style %%manimgl magic, optional LaTeX"
 readme = "README.md"
 requires-python = ">=3.10"

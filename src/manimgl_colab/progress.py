@@ -145,6 +145,58 @@ def run_streaming(
     return process.wait(), "".join(log_parts)
 
 
+class CPUMonitor:
+    """Samples system-wide CPU utilization from /proc/stat (zero deps).
+
+    Twin of GPUMonitor: 1 Hz daemon thread; ``line`` feeds the live progress
+    card, ``peak`` the post-render log card.  System-wide on purpose — it
+    captures the render process, parallel chunks and ffmpeg together.
+    """
+
+    def __init__(self) -> None:
+        self.line: str | None = None
+        self.peak: int = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._last: tuple[int, int] | None = None
+
+    @staticmethod
+    def _read() -> tuple[int, int]:
+        with open("/proc/stat", "r", encoding="ascii") as handle:
+            fields = [int(x) for x in handle.readline().split()[1:]]
+        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+        return sum(fields), idle
+
+    def _sample(self) -> None:
+        total, idle = self._read()
+        if self._last is not None:
+            d_total = total - self._last[0]
+            d_idle = idle - self._last[1]
+            if d_total > 0:
+                percent = round(100.0 * (d_total - d_idle) / d_total)
+                percent = max(0, min(100, percent))
+                self.peak = max(self.peak, percent)
+                self.line = f"CPU {percent}%"
+        self._last = (total, idle)
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self._sample()
+            except Exception:  # noqa: BLE001 — monitoring must never break renders
+                self.line = None
+                return
+            self._stop.wait(1.0)
+
+    def start(self) -> "CPUMonitor":
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
 class GPUMonitor:
     """Samples real GPU utilization (not just VRAM) via nvidia-smi.
 

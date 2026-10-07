@@ -210,6 +210,8 @@ def summary_card(info: dict[str, Any], raw_log: str | None = None) -> str:
     ]
     if info.get("gpu_peak"):
         rows.append(_row("GPU peak", esc(info["gpu_peak"])))
+    if info.get("cpu_peak"):
+        rows.append(_row("CPU peak", esc(info["cpu_peak"])))
     log_section = ""
     if raw_log is None and LOG_FILE.exists():
         try:

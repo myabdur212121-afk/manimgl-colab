@@ -147,6 +147,15 @@ proof stays exact. As a final safety net, if a warm GPU render ever fails the
 strict NVIDIA check, the worker is retired and the render is automatically
 redone on the classic cold path — strict mode is never weakened.
 
+## Live utilization in the progress card
+
+Every render shows live **CPU utilization** (sampled from `/proc/stat`, no
+dependencies); GPU renders show **GPU and CPU side by side** — e.g.
+`GPU 24% · enc 3% · VRAM 1.2/15 GB · CPU 96%` — which makes the real
+bottleneck visible at a glance (on free Colab the 2 vCPUs usually cap the T4
+well below 100%). `%manimgl_log` records the **CPU peak** next to the GPU
+peak.
+
 ## Information commands (clean output policy)
 
 During render: **only the progress card**. After render: **only the video**
@@ -260,6 +269,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.7.1**
+- Live CPU% in the progress card for every render; GPU renders show GPU% and CPU% side by side; CPU peak recorded in `%manimgl_log`.
 
 **2.7.0**
 - `--jobs N` now runs on the warm path: counting pass + all chunks fork from the warm worker (e.g. jobs=2 startup overhead ~4x faster in tests); per-chunk cold fallback; `--cold` honoured.
