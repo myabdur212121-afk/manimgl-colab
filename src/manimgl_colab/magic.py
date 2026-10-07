@@ -13,7 +13,7 @@ Examples::
     %manimgl_file --gpu -qk ultimate_stress_test.py UltimateStressTest
 
 Flags: -ql -qm -qh -qp -qk --draft | --gpu --cpu | -v LEVEL | --ERROR
-       --no-prerun --verbose --jobs N --fps N -s/--image --cold --display-width W --progress-off
+       --no-prerun --verbose --jobs N --fps N -s/--image --cold --display-width W | --display-height H --progress-off
 """
 
 from __future__ import annotations
@@ -62,6 +62,8 @@ def _parse_line(line: str) -> dict:
         "quality_label": "480p",
         "log_level": "WARNING",
         "display_width": 560,
+        "display_height": None,
+        "display_width_set": False,
         "prerun": True,
         "verbose": False,
         "full_error": False,
@@ -106,10 +108,29 @@ def _parse_line(line: str) -> dict:
         elif option == "--display-width":
             if index + 1 >= len(options):
                 raise ValueError("--display-width must be followed by a pixel width.")
+            if parsed["display_height"] is not None:
+                raise ValueError(
+                    "Use either --display-width or --display-height, not both "
+                    "(the other side is computed from the video's aspect)."
+                )
             width = int(options[index + 1])
             if width < 100:
                 raise ValueError("Display width must be at least 100 pixels.")
             parsed["display_width"] = width
+            parsed["display_width_set"] = True
+            index += 1
+        elif option == "--display-height":
+            if index + 1 >= len(options):
+                raise ValueError("--display-height must be followed by a pixel height.")
+            if parsed["display_width_set"]:
+                raise ValueError(
+                    "Use either --display-width or --display-height, not both "
+                    "(the other side is computed from the video's aspect)."
+                )
+            height = int(options[index + 1])
+            if height < 100:
+                raise ValueError("Display height must be at least 100 pixels.")
+            parsed["display_height"] = height
             index += 1
         elif option == "--jobs":
             if index + 1 >= len(options):
@@ -439,7 +460,12 @@ def register_magics() -> None:
             seconds=process_seconds, size_mb=size_mb, note=strip_note,
         ), force=True)
         if is_image:
-            display(Image(filename=str(output_path), width=parsed["display_width"]))
+            if parsed["display_height"] is not None:
+                display(Image(filename=str(output_path),
+                              height=parsed["display_height"]))
+            else:
+                display(Image(filename=str(output_path),
+                              width=parsed["display_width"]))
             if static_fallback:
                 display(HTML(
                     f'<div style="color:{ui.DIM}; font:11.5px {ui.MONO};'
@@ -448,10 +474,17 @@ def register_magics() -> None:
                     "</div>"
                 ))
         else:
-            attributes = (
-                "controls autoplay muted loop "
-                f'width="{parsed["display_width"]}" style="max-width:100%; height:auto;"'
-            )
+            if parsed["display_height"] is not None:
+                size_attr = (
+                    f'height="{parsed["display_height"]}" '
+                    'style="max-width:100%; width:auto;"'
+                )
+            else:
+                size_attr = (
+                    f'width="{parsed["display_width"]}" '
+                    'style="max-width:100%; height:auto;"'
+                )
+            attributes = "controls autoplay muted loop " + size_attr
             display(Video(str(expected_video), embed=True, html_attributes=attributes))
 
         ui.remember_render({
