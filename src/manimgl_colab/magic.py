@@ -13,7 +13,7 @@ Examples::
     %manimgl_file --gpu -qk ultimate_stress_test.py UltimateStressTest
 
 Flags: -ql -qm -qh -qp -qk --draft | --gpu --cpu | -v LEVEL | --ERROR
-       --no-prerun --verbose --jobs N --fps N -s/--image --cold --display-width W | --display-height H --progress-off
+       --no-prerun --verbose --jobs N --fps N -sql/-sqm/-sqh/-sqk (9:16 shorts) -s/--image --cold --display-width W | --display-height H --progress-off
 """
 
 from __future__ import annotations
@@ -46,6 +46,11 @@ _QUALITY_FLAGS = {
     "--quality=p": (["-r", "2560x1440"], "1440p"),
     "-qk": (["--uhd"], "4K"),
     "--quality=k": (["--uhd"], "4K"),
+    # Shorts/Reels presets — the same qualities rotated to 9:16 vertical.
+    "-sql": (["-r", "480x854"], "480×854 9:16"),
+    "-sqm": (["-r", "720x1280"], "720×1280 9:16"),
+    "-sqh": (["-r", "1080x1920"], "1080×1920 9:16"),
+    "-sqk": (["-r", "2160x3840"], "2160×3840 9:16"),
 }
 
 
@@ -154,6 +159,9 @@ def _parse_line(line: str) -> dict:
                 parsed["user_vcodec"] = True
             parsed["extra"].append(option)
         index += 1
+    if "9:16" in parsed["quality_label"] and not parsed["display_width_set"] \
+            and parsed["display_height"] is None:
+        parsed["display_height"] = 480   # tall videos shouldn't swallow the notebook
     if parsed["fps_override"]:
         cleaned = list(parsed["render_options"])
         if "--fps" in cleaned:

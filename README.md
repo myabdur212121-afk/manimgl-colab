@@ -79,6 +79,7 @@ driver quirks it falls back to `libx264` **once, visibly** (the log card shows
 | `--no-prerun` | skip the counting pass (progress shows it/s instead of %) |
 | `--fps N` | override frame rate for any quality (e.g. `-qk --fps 30`) |
 | `-s` / `--image` | render only the final frame as a PNG (poster/thumbnail) |
+| `-sql` / `-sqm` / `-sqh` / `-sqk` | **Shorts presets**: the same qualities rotated to 9:16 vertical (480×854 / 720×1280 / 1080×1920 / 2160×3840); the notebook player auto-sizes to height 480 |
 | `--display-width W` / `--display-height H` | notebook player size in px (one or the other — the free side follows the video's aspect; file pixels unaffected) |
 | `--cold` | force the classic isolated start even when warm mode is on |
 | `--verbose` / `-v` | stream the raw ManimGL log while rendering |
@@ -270,6 +271,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.8.0**
+- Shorts quality presets `-sql/-sqm/-sqh/-sqk` — 9:16 vertical twins of `-ql/-qm/-qh/-qk`, with an automatic compact notebook player (`display-height 480`, overridable).
 
 **2.7.2**
 - New `--display-height H`: size the notebook player by height (width auto) — handy for vertical/Shorts renders; mutually exclusive with `--display-width`.
