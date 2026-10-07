@@ -36,6 +36,15 @@ available on demand (see *Information commands* below).
 
 ---
 
+## 📚 Documentation
+
+| Doc | What's inside |
+|---|---|
+| [docs/colab-guide.md](docs/colab-guide.md) | Cell-by-cell Colab walkthrough + important gotchas (LaTeX is on-demand: `mc.install_latex()`) |
+| [docs/flags-and-magics.md](docs/flags-and-magics.md) | Every flag & magic — quality/Shorts presets, `-r` vs camera vs display, `-n` partial renders |
+| [docs/performance.md](docs/performance.md) | Warm mode, `--jobs`, and how to read CPU%/GPU% |
+| [docs/how-it-works.md](docs/how-it-works.md) | What `mc.setup()` does inside, strict GPU proof, warm fork-server design |
+
 ## Backends: CPU ↔ GPU, honestly
 
 ```python
@@ -271,6 +280,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.8.1**
+- New `docs/` folder: cell-by-cell Colab guide, full flags & magics reference, performance guide, and an internals walkthrough. Quick start stays in the README.
 
 **2.8.0**
 - Shorts quality presets `-sql/-sqm/-sqh/-sqk` — 9:16 vertical twins of `-ql/-qm/-qh/-qk`, with an automatic compact notebook player (`display-height 480`, overridable).
