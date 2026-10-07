@@ -132,8 +132,11 @@ imported and **forks** a pristine child per render. The child applies the
 render's environment, creates its own OpenGL context (GL proof still printed
 per render), renders and exits — crashes kill only the child, state never
 leaks between renders, and the worker auto-restarts after upgrades. Any warm
-failure silently falls back to the classic cold path. `--jobs N` renders
-always use the cold path.
+failure silently falls back to the classic cold path.
+
+`--jobs N` is warm-aware too: the animation-counting pass and every chunk
+fork from the warm worker (zero import cost each); any chunk that cannot go
+warm falls back to cold on its own.
 
 **Backends:** the EGL vendor (NVIDIA vs Mesa) is chosen and cached by glvnd
 while the engine is being imported — a forked child cannot switch it later.
@@ -257,6 +260,9 @@ mc.register_magics()
   ~1 min at `-qm` and ~3 min at `-qk` on a Colab T4.
 
 ## Changelog
+
+**2.7.0**
+- `--jobs N` now runs on the warm path: counting pass + all chunks fork from the warm worker (e.g. jobs=2 startup overhead ~4x faster in tests); per-chunk cold fallback; `--cold` honoured.
 
 **2.6.0**
 - Warm workers are now born per backend (glvnd seals the EGL vendor at engine import, so forked children can't switch vendors). Backend switches rebirth the worker once; a strict-GPU failure on the warm path auto-retries cold. Fixes GPU renders failing with "context is llvmpipe" under warm mode.

@@ -173,6 +173,26 @@ def stop() -> bool:
     return was_running
 
 
+def ensure_backend(environment: dict) -> bool:
+    """True when an active worker matches the environment's backend.
+
+    Called ONCE before spawning parallel chunk threads so that a needed
+    backend rebirth happens up front instead of racing inside the threads.
+    Returns False (never raises) when warm simply isn't available.
+    """
+    try:
+        if not is_active():
+            return False
+        requested = environment.get("MANIMGL_COLAB_EXPECT", "cpu")
+        info = ping()
+        if info and info.get("backend") != requested:
+            start(backend=requested)
+            info = ping()
+        return bool(info) and info.get("backend") == requested
+    except WarmError:
+        return False
+
+
 def run_via_warm(
     command: list[str],
     environment: dict[str, str],
@@ -189,7 +209,10 @@ def run_via_warm(
     """
     from .progress import ProgressState
 
-    if len(command) < 3 or Path(command[1]).name != "runner.py":
+    script = Path(command[1])
+    if (len(command) < 3
+            or script.name not in ("runner.py", "count_runner.py")
+            or script.parent != paths.PACKAGE_DIR):
         raise WarmError("Unexpected command shape for the warm path.")
     if not is_active():
         raise WarmError("Warm worker is not active.")
@@ -214,6 +237,7 @@ def run_via_warm(
     try:
         response = _request({
             "op": "render",
+            "script": str(script),
             "args": [str(part) for part in command[2:]],
             "env": dict(environment),
             "log": str(log_path),

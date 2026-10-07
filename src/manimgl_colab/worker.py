@@ -13,8 +13,9 @@ and dies when done — so render isolation is fully preserved:
 Protocol (newline-delimited JSON over a unix socket):
   {"op": "ping"}                       -> {"ok": true, "version": ..., "served": n}
   {"op": "shutdown"}                   -> {"ok": true}   and the worker exits
-  {"op": "render", "args": [...],
-   "env": {...}, "log": p, "done": p}  -> {"ok": true, "pid": child_pid}
+  {"op": "render", "args": [...], "env": {...}, "log": p, "done": p,
+   "script": optional path (default RUNNER_PATH)}
+                                       -> {"ok": true, "pid": child_pid}
     child stdout+stderr -> log file; on exit {"code": c} is written to done.
 
 Standard library only.
@@ -89,10 +90,11 @@ def _child_render(request: dict) -> None:
     for module_name in [m for m in sys.modules if m.split(".")[0] == "manimlib"]:
         del sys.modules[module_name]
 
-    sys.argv = [RUNNER_PATH] + list(request.get("args") or [])
+    script = request.get("script") or RUNNER_PATH
+    sys.argv = [script] + list(request.get("args") or [])
     code = 0
     try:
-        runpy.run_path(RUNNER_PATH, run_name="__main__")
+        runpy.run_path(script, run_name="__main__")
     except SystemExit as exit_error:
         raw = exit_error.code
         code = raw if isinstance(raw, int) else (0 if raw is None else 1)

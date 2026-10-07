@@ -24,42 +24,30 @@ from . import paths
 from .progress import ProgressState, run_streaming
 
 
-def _count_animations(scene_name: str, environment: dict[str, str]) -> int:
+def _count_animations(
+    scene_name: str, environment: dict[str, str], use_warm: bool = False,
+) -> int:
     """Dry-run the scene (skip_animations) inside the engine and count plays."""
-    code = r"""
-import os, sys, warnings
-warnings.filterwarnings("ignore")
-os.environ.setdefault("PYGLET_HEADLESS", "true")
-os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
-import pyglet
-pyglet.options["headless"] = True
-pyglet.options["shadow_window"] = False
+    command = [
+        str(paths.ENV_PYTHON), str(paths.PACKAGE_DIR / "count_runner.py"),
+        str(paths.SCENE_FILE), scene_name,
+    ]
+    output = ""
+    if use_warm:
+        try:
+            from . import warmup
 
-import importlib.util
-scene_file, scene_name = sys.argv[1], sys.argv[2]
-spec = importlib.util.spec_from_file_location("usercell", scene_file)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-cls = getattr(module, scene_name)
-scene = cls(
-    window=None,
-    camera_config={"resolution": (160, 90), "fps": 5},
-    file_writer_config={
-        "write_to_movie": False,
-        "save_last_frame": False,
-        "quiet": True,
-    },
-    skip_animations=True,
-)
-scene.run()
-print("NUM_PLAYS:", scene.num_plays)
-"""
-    result = subprocess.run(
-        [str(paths.ENV_PYTHON), "-W", "ignore", "-c", code,
-         str(paths.SCENE_FILE), scene_name],
-        env=environment, capture_output=True, text=True, timeout=600,
-    )
-    output = (result.stdout or "") + (result.stderr or "")
+            _, output = warmup.run_via_warm(
+                command, environment, lambda state: None,
+            )
+        except Exception:  # noqa: BLE001 — fall back to the cold pass
+            output = ""
+    if "NUM_PLAYS:" not in output:
+        result = subprocess.run(
+            command, env=environment, capture_output=True, text=True,
+            timeout=600,
+        )
+        output = (result.stdout or "") + (result.stderr or "")
     for line in reversed(output.splitlines()):
         if line.startswith("NUM_PLAYS:"):
             return int(line.split(":", 1)[1])
@@ -87,9 +75,19 @@ def render_parallel(
     environment: dict[str, str],
     jobs: int,
     on_update,
-) -> tuple[int, str, int]:
-    """Render in ``jobs`` processes; returns (returncode, log, num_plays)."""
-    total_plays = _count_animations(scene_name, environment)
+    use_warm: bool = False,
+) -> tuple[int, str, int, str]:
+    """Render in ``jobs`` processes.
+
+    Returns (returncode, log, num_plays, start_mode). With ``use_warm`` the
+    counting pass and every chunk fork from the warm worker (zero import
+    cost each); any chunk that cannot go warm falls back to cold alone.
+    """
+    if use_warm:
+        from . import warmup
+
+        use_warm = warmup.ensure_backend(environment)
+    total_plays = _count_animations(scene_name, environment, use_warm)
     ranges = _chunk_ranges(total_plays, jobs)
     jobs = len(ranges)
 
@@ -98,6 +96,7 @@ def render_parallel(
     work_root.mkdir(parents=True)
 
     states: list[ProgressState] = [ProgressState() for _ in ranges]
+    warm_misses: list[bool] = [False] * len(ranges)
     results: list[tuple[int, str] | None] = [None] * len(ranges)
     threads: list[threading.Thread] = []
 
@@ -129,6 +128,16 @@ def render_parallel(
             aggregate.anim_label = f"{jobs} workers · {active} active"
             on_update(aggregate)
 
+        if use_warm:
+            try:
+                from . import warmup
+
+                results[index] = warmup.run_via_warm(
+                    command, environment, chunk_update,
+                )
+                return
+            except Exception:  # noqa: BLE001 — this chunk alone goes cold
+                warm_misses[index] = True
         results[index] = run_streaming(command, environment, chunk_update)
 
     for index, animation_range in enumerate(ranges):
@@ -139,19 +148,27 @@ def render_parallel(
     for thread in threads:
         thread.join()
 
+    if not use_warm:
+        start_mode = "cold"
+    elif any(warm_misses):
+        start_mode = "warm (partial)"
+    else:
+        start_mode = "warm"
+
     logs = []
     for index, result in enumerate(results):
         returncode, log = result if result else (1, "worker produced no result")
         logs.append(f"===== worker {index} (anims {ranges[index]}) =====\n{log}")
         if returncode != 0:
-            return returncode, "\n".join(logs), total_plays
+            return returncode, "\n".join(logs), total_plays, start_mode
 
     # Losslessly concatenate the chunk files in order.
     parts: list[Path] = []
     for index in range(len(ranges)):
         chunk_files = sorted((work_root / f"chunk{index}").glob("*.mp4"))
         if not chunk_files:
-            return 1, "\n".join(logs) + f"\nworker {index} produced no MP4", total_plays
+            return (1, "\n".join(logs) + f"\nworker {index} produced no MP4",
+                    total_plays, start_mode)
         parts.append(chunk_files[0])
 
     list_file = work_root / "concat.txt"
@@ -166,4 +183,4 @@ def render_parallel(
         capture_output=True, text=True,
     )
     logs.append("===== ffmpeg concat =====\n" + (concat.stdout or "") + (concat.stderr or ""))
-    return concat.returncode, "\n".join(logs), total_plays
+    return concat.returncode, "\n".join(logs), total_plays, start_mode

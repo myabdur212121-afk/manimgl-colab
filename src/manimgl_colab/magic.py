@@ -313,13 +313,15 @@ def register_magics() -> None:
         if parsed["jobs"] > 1:
             from .parallel import render_parallel
 
-            return_code, raw_output, num_plays = render_parallel(
+            return_code, raw_output, num_plays, jobs_mode = render_parallel(
                 scene_name=scene_name,
                 base_command=build_command(encoder_args),
                 environment=environment,
                 jobs=parsed["jobs"],
                 on_update=on_update,
+                use_warm=not parsed["cold"],
             )
+            parsed["start_mode"] = jobs_mode
         else:
             return_code, raw_output = _stream(build_command(encoder_args))
             # Self-healing: when the cheap prerun pass itself crashes (some
